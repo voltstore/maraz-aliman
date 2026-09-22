@@ -360,9 +360,13 @@ const DEFAULT_STATE = {
   teachers:[],
   students:[],
   attendance:{},        // { 'YYYY-MM-DD': { studentId: 'present'|'absent'|'late'|'excused' } }
+  attMeta:{},           // { 'YYYY-MM-DD': { studentId: ISOدateTime لوقت التسجيل } }
+  records:[],           // [ {id, studentId, kind:'note'|'incident', date, at, by, byName, text, severity} ]
   examSchedules:{},      // { sectionNumber: [ {id,date,subject,time} ] }
   committees:[],         // [ {id,number,subject,date,venue,sectionA,sectionB,studentIds:[],approved} ]
 };
+const nowISO = () => new Date().toISOString();
+const fmtTime = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit"}).format(new Date(iso)); }catch(e){ return ""; } };
 
 function loadLocal(){
   try{ const s = JSON.parse(localStorage.getItem(LS_KEY)); return s || null; }catch(e){ return null; }
@@ -540,6 +544,7 @@ const NAV = [
   {sep:"الرئيسية"},
   {id:"dashboard", label:"لوحة المعلومات", ic:"◧", roles:["manager","deputy","teacher"]},
   {id:"attendance", label:"الحضور والغياب", ic:"✓", roles:["manager","deputy","teacher"]},
+  {id:"records", label:"سجلات الطلاب", ic:"▦", roles:["manager","deputy","teacher"]},
   {id:"stats", label:"التقارير والإحصائيات", ic:"◔", roles:["manager","deputy"]},
   {id:"monitor", label:"مراقبة الغياب", ic:"◎", roles:["manager","deputy"]},
   {sep:"الإدارة"},
@@ -574,9 +579,10 @@ function Shell({state, commit, user, onLogout, onUserUpdate}){
   const Page = {
     dashboard:<Dashboard state={state} user={user} go={go}/>,
     attendance:<Attendance state={state} commit={commit} user={user}/>,
+    records:<Records state={state} commit={commit} user={user}/>,
     stats:<Stats state={state}/>,
     monitor:<Monitor state={state}/>,
-    students:<Students state={state} commit={commit}/>,
+    students:<Students state={state} commit={commit} user={user}/>,
     teachers:<Teachers state={state} commit={commit}/>,
     schedule:<Schedule state={state} commit={commit}/>,
     committees:<Committees state={state} commit={commit}/>,
@@ -689,16 +695,17 @@ function Attendance({state, commit, user}){
 
   const setStatus=(sid,status)=>{
     commit(prev=>{
-      const day = {...(prev.attendance[date]||{})};
-      day[sid]=status;
-      return {...prev, attendance:{...prev.attendance, [date]:day}};
+      const day = {...(prev.attendance[date]||{})}; day[sid]=status;
+      const meta = {...((prev.attMeta||{})[date]||{})}; meta[sid]=nowISO();
+      return {...prev, attendance:{...prev.attendance, [date]:day}, attMeta:{...(prev.attMeta||{}), [date]:meta}};
     });
   };
   const markAll=status=>{
     commit(prev=>{
       const day={...(prev.attendance[date]||{})};
-      roster.forEach(s=>day[s.id]=status);
-      return {...prev, attendance:{...prev.attendance,[date]:day}};
+      const meta={...((prev.attMeta||{})[date]||{})}; const t=nowISO();
+      roster.forEach(s=>{ day[s.id]=status; meta[s.id]=t; });
+      return {...prev, attendance:{...prev.attendance,[date]:day}, attMeta:{...(prev.attMeta||{}),[date]:meta}};
     });
     toast("تم تحديث الشعبة كاملة");
   };
@@ -762,6 +769,8 @@ const statusBtn = k => ({
   late:{background:"var(--warn)",borderColor:"var(--warn)",color:"#3a2c07"},
   excused:{background:"var(--info)",borderColor:"var(--info)"},
 }[k]);
+const sevLabel = s => ({low:"بسيطة",mid:"متوسطة",high:"جسيمة"}[s]||"—");
+const sevColor = s => ({low:"var(--warn)",mid:"var(--accent)",high:"var(--danger)"}[s]||"var(--line-strong)");
 
 /* ========================= STATS ========================= */
 function Stats({state}){
@@ -977,12 +986,173 @@ function Monitor({state}){
   );
 }
 
+/* ========================= RECORDS (سجلات الطلاب) ========================= */
+function Records({state, commit, user}){
+  const [q,setQ]=useState(""); const [fSec,setFSec]=useState("all");
+  const [open,setOpen]=useState(null);
+  const secs=sectionsRange(state.meta.sectionsCount);
+  const list=state.students
+    .filter(s=>fSec==="all"||s.section===+fSec)
+    .filter(s=>s.name.includes(q.trim()))
+    .sort((a,b)=>a.section-b.section||a.name.localeCompare(b.name,"ar"));
+  const absCount=sid=>{ let a=0; Object.values(state.attendance).forEach(d=>{ if(d[sid]==="absent") a++; }); return a; };
+  const recCount=sid=>(state.records||[]).filter(r=>r.studentId===sid);
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>سجلات الطلاب</h2><p>السجل الكامل لكل طالب: الحضور والغياب، الملاحظات، والمخالفات/السوابق.</p></div>
+      </div>
+      <div className="card pad" style={{marginBottom:16,display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end"}}>
+        <Field label="بحث بالاسم" style={{margin:0,flex:1,minWidth:200}}>
+          <input className="input" type="search" value={q} onChange={e=>setQ(e.target.value)} placeholder="اكتب اسم الطالب…"/>
+        </Field>
+        <Field label="تصفية بالشعبة" style={{margin:0,minWidth:180}}>
+          <select className="input" value={fSec} onChange={e=>setFSec(e.target.value)}>
+            <option value="all">كل الشُّعب</option>
+            {secs.map(n=><option key={n} value={n}>شعبة {n}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {list.length===0
+        ? <div className="card"><div className="empty"><div className="big">▦</div>لا يوجد طلاب.</div></div>
+        : <div className="card"><table className="tbl cv">
+            <thead><tr><th>#</th><th>الطالب</th><th>الشعبة</th><th>الصف</th><th>الغياب</th><th>ملاحظات/مخالفات</th><th style={{width:1}}></th></tr></thead>
+            <tbody>{list.map((s,i)=>{ const a=absCount(s.id); const recs=recCount(s.id); return <tr key={s.id}>
+              <td style={{color:"var(--ink-faint)"}}>{i+1}</td>
+              <td style={{fontWeight:600}}>{s.name}</td>
+              <td><span className="tag brand">شعبة {s.section}</span></td>
+              <td>{gradeName(s.section,state.grades)}</td>
+              <td>{a?<span className="pill absent">{a}</span>:<span style={{color:"var(--ink-faint)"}}>0</span>}</td>
+              <td>{recs.length?<span className="pill late">{recs.length}</span>:<span style={{color:"var(--ink-faint)"}}>0</span>}</td>
+              <td><button className="btn ghost sm" onClick={()=>setOpen(s)}>عرض السجل</button></td>
+            </tr>; })}</tbody>
+          </table></div>}
+
+      {open && <StudentRecord student={open} state={state} commit={commit} user={user} onClose={()=>setOpen(null)}/>}
+    </div>
+  );
+}
+
+function StudentRecord({student, state, commit, user, onClose}){
+  const toast=useToast();
+  const canManageAtt = user.role==="manager"||user.role==="deputy";
+  const canDelRec = r => user.role==="manager"||user.role==="deputy"||r.by===user.id;
+
+  const history=Object.keys(state.attendance)
+    .filter(d=>state.attendance[d][student.id]!==undefined)
+    .map(d=>({date:d, status:state.attendance[d][student.id], at:((state.attMeta||{})[d]||{})[student.id]}))
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  const counts={present:0,absent:0,late:0,excused:0}; history.forEach(h=>counts[h.status]!==undefined&&counts[h.status]++);
+  const recs=(state.records||[]).filter(r=>r.studentId===student.id).sort((a,b)=>String(b.at||b.date).localeCompare(String(a.at||a.date)));
+  const notes=recs.filter(r=>r.kind==="note");
+  const incidents=recs.filter(r=>r.kind==="incident");
+
+  const setDay=(date,status)=>commit(p=>{
+    const day={...(p.attendance[date]||{})}; day[student.id]=status;
+    const meta={...((p.attMeta||{})[date]||{})}; meta[student.id]=nowISO();
+    return {...p, attendance:{...p.attendance,[date]:day}, attMeta:{...(p.attMeta||{}),[date]:meta}};
+  });
+  const delDay=(date)=>commit(p=>{
+    const day={...(p.attendance[date]||{})}; delete day[student.id];
+    const meta={...((p.attMeta||{})[date]||{})}; delete meta[student.id];
+    return {...p, attendance:{...p.attendance,[date]:day}, attMeta:{...(p.attMeta||{}),[date]:meta}};
+  });
+  const addRec=(rec)=>commit(p=>({...p, records:[...(p.records||[]), {id:uid(), studentId:student.id, date:todayISO(), at:nowISO(), by:user.id, byName:user.name, ...rec}]}));
+  const delRec=(id)=>commit(p=>({...p, records:(p.records||[]).filter(r=>r.id!==id)}));
+
+  const [note,setNote]=useState("");
+  const [inc,setInc]=useState(""); const [sev,setSev]=useState("mid"); const [itype,setItype]=useState("");
+
+  const H = ({children}) => <h3 style={{fontSize:16,margin:"20px 0 8px"}}>{children}</h3>;
+
+  return (
+    <Modal title="سجل الطالب" onClose={onClose} wide
+      foot={<>
+        <button className="btn ghost" onClick={()=>printStudentRecord(student,state)}>تصدير السجل PDF</button>
+        <button className="btn" onClick={onClose}>إغلاق</button>
+      </>}>
+      <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+        <div className="av" style={{width:50,height:50,borderRadius:14,fontSize:22}}>{student.name.slice(0,1)}</div>
+        <div>
+          <div style={{fontFamily:"El Messiri",fontSize:20,fontWeight:700}}>{student.name}</div>
+          <div style={{fontSize:13,color:"var(--ink-soft)"}}>شعبة {student.section} · {gradeName(student.section,state.grades)}</div>
+        </div>
+        <div style={{marginRight:"auto",display:"flex",gap:6,flexWrap:"wrap"}}>
+          <span className="pill absent">غياب {counts.absent}</span>
+          <span className="pill late">تأخير {counts.late}</span>
+          <span className="pill excused">بعذر {counts.excused}</span>
+          <span className="pill present">حضور {counts.present}</span>
+        </div>
+      </div>
+
+      <H>سجل الحضور والغياب</H>
+      {history.length===0 ? <div className="hint">لا يوجد سجل حضور لهذا الطالب.</div>
+        : <div className="card"><table className="tbl">
+            <thead><tr><th>اليوم</th><th>التاريخ</th><th>وقت التسجيل</th><th>الحالة</th>{canManageAtt&&<th style={{width:1}}>تعديل</th>}</tr></thead>
+            <tbody>{history.map(h=><tr key={h.date}>
+              <td>{weekdayOf(h.date)}</td>
+              <td>{fmtDate(h.date)}</td>
+              <td>{h.at?fmtTime(h.at):"—"}</td>
+              <td><span className={"pill "+h.status}>{statusLabel(h.status)}</span></td>
+              {canManageAtt&&<td><div style={{display:"flex",gap:6}}>
+                <select className="input" style={{padding:"5px 8px",width:"auto"}} value={h.status} onChange={e=>setDay(h.date,e.target.value)} aria-label="تغيير الحالة">
+                  {["present","absent","late","excused"].map(k=><option key={k} value={k}>{statusLabel(k)}</option>)}
+                </select>
+                <button className="btn danger sm" onClick={()=>{delDay(h.date);toast("حُذف اليوم");}}>حذف</button>
+              </div></td>}
+            </tr>)}</tbody>
+          </table></div>}
+
+      <H>الملاحظات</H>
+      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+        <input className="input" style={{flex:1,minWidth:200}} value={note} onChange={e=>setNote(e.target.value)} placeholder="أضف ملاحظة عن الطالب…"/>
+        <button className="btn" disabled={!note.trim()} onClick={()=>{addRec({kind:"note",text:note.trim()});setNote("");toast("أُضيفت الملاحظة");}}>إضافة</button>
+      </div>
+      {notes.length===0 ? <div className="hint">لا ملاحظات.</div>
+        : notes.map(r=><div key={r.id} className="card pad" style={{padding:"11px 14px",marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
+              <div style={{fontSize:14}}>{r.text}</div>
+              {canDelRec(r)&&<button className="x" style={{fontSize:18}} aria-label="حذف" onClick={()=>delRec(r.id)}>×</button>}
+            </div>
+            <div style={{fontSize:11.5,color:"var(--ink-faint)",marginTop:4}}>{r.byName||"—"} · {fmtDate(r.date)}{r.at?" · "+fmtTime(r.at):""}</div>
+          </div>)}
+
+      <H>المخالفات والسوابق</H>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,marginBottom:8}}>
+        <input className="input" value={itype} onChange={e=>setItype(e.target.value)} placeholder="النوع (سلوكية/نظام…)"/>
+        <select className="input" value={sev} onChange={e=>setSev(e.target.value)} aria-label="الخطورة">
+          <option value="low">بسيطة</option><option value="mid">متوسطة</option><option value="high">جسيمة</option>
+        </select>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+        <input className="input" style={{flex:1,minWidth:200}} value={inc} onChange={e=>setInc(e.target.value)} placeholder="وصف المخالفة/السابقة…"/>
+        <button className="btn accent" disabled={!inc.trim()} onClick={()=>{addRec({kind:"incident",text:inc.trim(),severity:sev,itype:itype.trim()});setInc("");setItype("");toast("سُجّلت المخالفة");}}>تسجيل</button>
+      </div>
+      {incidents.length===0 ? <div className="hint">لا مخالفات مسجّلة.</div>
+        : incidents.map(r=><div key={r.id} className="card pad" style={{padding:"11px 14px",marginBottom:8,borderRight:"3px solid "+sevColor(r.severity)}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
+              <div>
+                <span className="tag" style={{background:sevColor(r.severity),color:"#fff",borderColor:"transparent"}}>{sevLabel(r.severity)}</span>
+                {r.itype&&<span style={{fontSize:12.5,color:"var(--ink-soft)",marginRight:6}}>· {r.itype}</span>}
+                <div style={{fontSize:14,marginTop:5}}>{r.text}</div>
+              </div>
+              {canDelRec(r)&&<button className="x" style={{fontSize:18}} aria-label="حذف" onClick={()=>delRec(r.id)}>×</button>}
+            </div>
+            <div style={{fontSize:11.5,color:"var(--ink-faint)",marginTop:4}}>{r.byName||"—"} · {fmtDate(r.date)}</div>
+          </div>)}
+    </Modal>
+  );
+}
+
 /* ========================= STUDENTS ========================= */
-function Students({state, commit}){
+function Students({state, commit, user}){
   const toast=useToast();
   const [q,setQ]=useState(""); const [fSec,setFSec]=useState("all");
   const [modal,setModal]=useState(null); // {mode:'add'|'edit'|'move', student}
   const [bulk,setBulk]=useState(false);
+  const [rec,setRec]=useState(null);
   const [confirm,setConfirm]=useState(null);
   const secs=sectionsRange(state.meta.sectionsCount);
 
@@ -1051,7 +1221,8 @@ function Students({state, commit}){
                   <td style={{fontWeight:600}}>{s.name}</td>
                   <td><span className="tag brand">شعبة {s.section}</span></td>
                   <td>{gradeName(s.section,state.grades)}</td>
-                  <td><div style={{display:"flex",gap:6}}>
+                  <td><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    <button className="btn ghost sm" onClick={()=>setRec(s)}>السجل</button>
                     <button className="btn ghost sm" onClick={()=>setModal({mode:"edit",student:s})}>تعديل</button>
                     <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف الطالب «${s.name}»؟`,onYes:()=>remove(s)})}>حذف</button>
                   </div></td>
@@ -1062,6 +1233,7 @@ function Students({state, commit}){
 
       {modal && <StudentForm mode={modal.mode} student={modal.student} secs={secs} grades={state.grades} onClose={()=>setModal(null)} onSave={save}/>}
       {bulk && <BulkStudents secs={secs} grades={state.grades} onClose={()=>setBulk(false)} onAdd={addBulk}/>}
+      {rec && <StudentRecord student={rec} state={state} commit={commit} user={user} onClose={()=>setRec(null)}/>}
       {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
     </div>
   );
@@ -1555,6 +1727,31 @@ function printRoster(list, title, state){
     + `<table class="tbl"><thead><tr><th style="width:44px">م</th><th>اسم الطالب</th><th>الشعبة</th><th>الصف</th></tr></thead><tbody>${body}</tbody></table>`
     + printFoot(meta.schoolName);
   openPrint("كشف الطلاب", inner);
+}
+
+function printStudentRecord(student, state){
+  const {grades,meta,attendance,attMeta,records}=state;
+  const history=Object.keys(attendance).filter(d=>attendance[d][student.id]!==undefined)
+    .map(d=>({date:d,status:attendance[d][student.id],at:((attMeta||{})[d]||{})[student.id]}))
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  const counts={present:0,absent:0,late:0,excused:0}; history.forEach(h=>counts[h.status]!==undefined&&counts[h.status]++);
+  const recs=(records||[]).filter(r=>r.studentId===student.id);
+  const notes=recs.filter(r=>r.kind==="note"), incidents=recs.filter(r=>r.kind==="incident");
+  const secH = t => `<h3 style="color:#1f5d4f;font-family:'El Messiri';font-size:16px;margin:20px 0 6px">${t}</h3>`;
+  const none = t => `<div style="color:#8a8478;font-size:13px">${t}</div>`;
+  const attRows=history.map(h=>`<tr><td>${esc(weekdayOf(h.date))}</td><td>${esc(fmtDate(h.date))}</td><td>${h.at?esc(fmtTime(h.at)):"—"}</td><td>${esc(statusLabel(h.status))}</td></tr>`).join("");
+  const noteRows=notes.map(r=>`<tr><td class="name">${esc(r.text)}</td><td>${esc(r.byName||"")}</td><td>${esc(fmtDate(r.date))}</td></tr>`).join("");
+  const incRows=incidents.map(r=>`<tr><td>${esc(sevLabel(r.severity))}</td><td>${esc(r.itype||"—")}</td><td class="name">${esc(r.text)}</td><td>${esc(fmtDate(r.date))}</td></tr>`).join("");
+  const inner = printHead({schoolName:meta.schoolName, title:"السجل الدراسي للطالب", subtitle:`${student.name} — شعبة ${student.section} — ${gradeName(student.section,grades)}`, badge:{k:"الغياب", v:counts.absent}})
+    + printMeta([{k:"الطالب",v:student.name},{k:"الغياب",v:counts.absent},{k:"التأخير",v:counts.late},{k:"بعذر",v:counts.excused},{k:"المخالفات",v:incidents.length}])
+    + secH("سجل الحضور والغياب")
+    + (history.length?`<table class="tbl"><thead><tr><th>اليوم</th><th>التاريخ</th><th>وقت التسجيل</th><th>الحالة</th></tr></thead><tbody>${attRows}</tbody></table>`:none("لا يوجد سجل حضور."))
+    + secH("الملاحظات")
+    + (notes.length?`<table class="tbl"><thead><tr><th>الملاحظة</th><th>بواسطة</th><th>التاريخ</th></tr></thead><tbody>${noteRows}</tbody></table>`:none("لا ملاحظات."))
+    + secH("المخالفات والسوابق")
+    + (incidents.length?`<table class="tbl"><thead><tr><th>الخطورة</th><th>النوع</th><th>الوصف</th><th>التاريخ</th></tr></thead><tbody>${incRows}</tbody></table>`:none("لا مخالفات مسجّلة."))
+    + printFoot(meta.schoolName);
+  openPrint("سجل "+student.name, inner);
 }
 
 /* ========================= PROFILE (حسابي) ========================= */
