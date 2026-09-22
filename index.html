@@ -548,12 +548,13 @@ const NAV = [
   {id:"schedule", label:"جدول الاختبارات", ic:"▤", roles:["manager","deputy"]},
   {id:"committees", label:"لجان الاختبارات", ic:"⬚", roles:["manager","deputy"]},
   {sep:"النظام"},
+  {id:"profile", label:"حسابي", ic:"◍", roles:["manager","deputy","teacher"]},
   {id:"settings", label:"الإعدادات", ic:"⚙", roles:["manager","deputy"]},
   {id:"accounts", label:"الحسابات", ic:"◈", roles:["manager"]},
 ];
 
 /* ========================= SHELL ========================= */
-function Shell({state, commit, user, onLogout}){
+function Shell({state, commit, user, onLogout, onUserUpdate}){
   const allowed = id => { const n=NAV.find(x=>x.id===id); return n && n.roles.includes(user.role); };
   const initial = (()=>{ const h=(location.hash||"").replace("#",""); return allowed(h)?h:"dashboard"; })();
   const [page,setPage]=useState(initial);
@@ -578,6 +579,7 @@ function Shell({state, commit, user, onLogout}){
     teachers:<Teachers state={state} commit={commit}/>,
     schedule:<Schedule state={state} commit={commit}/>,
     committees:<Committees state={state} commit={commit}/>,
+    profile:<Profile user={user} commit={commit} onUserUpdate={onUserUpdate}/>,
     settings:<Settings state={state} commit={commit}/>,
     accounts:<Accounts state={state} commit={commit} user={user}/>,
   }[page];
@@ -615,10 +617,10 @@ function Shell({state, commit, user, onLogout}){
             </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}} className="no-print">
-            <div className="userchip">
+            <button className="userchip" onClick={()=>go("profile")} aria-label="حسابي" style={{cursor:"pointer",font:"inherit",color:"inherit"}}>
               <div className="who">{user.name}<div className="role">{roleLabel(user.role)}</div></div>
               <div className="av">{user.name.slice(0,1)}</div>
-            </div>
+            </button>
             <button className="btn ghost sm" onClick={onLogout}>خروج</button>
           </div>
         </div>
@@ -1480,6 +1482,78 @@ function printCommittee(c, state){
   setTimeout(()=>{ try{w.print();}catch(e){} }, 600);
 }
 
+/* ========================= PROFILE (حسابي) ========================= */
+function Profile({user, commit, onUserUpdate}){
+  const toast=useToast();
+  const [name,setName]=useState(user.name);
+  const [savingName,setSavingName]=useState(false);
+  const [cur,setCur]=useState(""); const [np,setNp]=useState(""); const [np2,setNp2]=useState("");
+  const [savingPass,setSavingPass]=useState(false);
+
+  const saveName=async()=>{
+    const nm=name.trim(); if(nm.length<2){ toast("الاسم قصير جداً","err"); return; }
+    setSavingName(true);
+    try{
+      if(FIREBASE_READY){ await fdb.collection(USERS_COL).doc(user.id).update({name:nm}); }
+      else { commit(p=>({...p,users:(p.users||[]).map(u=>u.id===user.id?{...u,name:nm}:u)})); }
+      onUserUpdate({name:nm}); toast("تم تحديث الاسم");
+    }catch(e){ toast("تعذّر الحفظ — تأكد من قواعد الأمان","err"); }
+    finally{ setSavingName(false); }
+  };
+
+  const savePass=async()=>{
+    if(np.length<6){ toast("كلمة المرور 6 خانات على الأقل","err"); return; }
+    if(np!==np2){ toast("كلمتا المرور غير متطابقتين","err"); return; }
+    setSavingPass(true);
+    try{
+      if(FIREBASE_READY){
+        const u=fauth.currentUser;
+        const cred=firebase.auth.EmailAuthProvider.credential(u.email, cur);
+        await u.reauthenticateWithCredential(cred);
+        await u.updatePassword(np);
+      } else {
+        commit(p=>({...p,users:(p.users||[]).map(x=>x.id===user.id?{...x,password:np}:x)}));
+      }
+      setCur("");setNp("");setNp2(""); toast("تم تغيير كلمة المرور");
+    }catch(ex){
+      const c=(ex&&ex.code)||"";
+      toast((c.includes("wrong-password")||c.includes("invalid-credential"))?"كلمة المرور الحالية غير صحيحة":
+            c.includes("requires-recent-login")?"لأمانك، سجّل خروج ثم دخول وحاول مجدداً":
+            c.includes("weak-password")?"كلمة المرور ضعيفة":"تعذّر تغيير كلمة المرور","err");
+    }finally{ setSavingPass(false); }
+  };
+
+  return (
+    <div className="rise" style={{maxWidth:620}}>
+      <div className="section-head"><div><h2>حسابي</h2><p>عدّل اسمك وكلمة مرورك.</p></div></div>
+
+      <div className="card pad" style={{marginBottom:18}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
+          <div className="av" style={{width:54,height:54,borderRadius:16,fontSize:24}}>{user.name.slice(0,1)}</div>
+          <div>
+            <div style={{fontFamily:"El Messiri",fontSize:20,fontWeight:700}}>{user.name}</div>
+            <div style={{fontSize:13,color:"var(--ink-soft)"}}>
+              اسم المستخدم: <b>{user.username}</b> · الصلاحية: <span className={"tag "+(user.role==="manager"?"accent":"brand")}>{roleLabel(user.role)}</span>
+            </div>
+          </div>
+        </div>
+        <Field label="الاسم"><input className="input" value={name} onChange={e=>setName(e.target.value)}/></Field>
+        <div className="hint" style={{marginBottom:14}}>اسم المستخدم والصلاحية يغيّرهما المدير فقط.</div>
+        <button className="btn" onClick={saveName} disabled={savingName||name.trim()===user.name||name.trim().length<2}>{savingName?"جارٍ…":"حفظ الاسم"}</button>
+      </div>
+
+      <div className="card pad">
+        <h3 style={{marginTop:0}}>تغيير كلمة المرور</h3>
+        {FIREBASE_READY &&
+          <Field label="كلمة المرور الحالية"><input className="input" type="password" autoComplete="current-password" value={cur} onChange={e=>setCur(e.target.value)}/></Field>}
+        <Field label="كلمة المرور الجديدة" hint="6 خانات على الأقل"><input className="input" type="password" autoComplete="new-password" value={np} onChange={e=>setNp(e.target.value)}/></Field>
+        <Field label="تأكيد كلمة المرور الجديدة"><input className="input" type="password" autoComplete="new-password" value={np2} onChange={e=>setNp2(e.target.value)}/></Field>
+        <button className="btn accent" onClick={savePass} disabled={savingPass||!np||(FIREBASE_READY&&!cur)}>{savingPass?"جارٍ…":"تغيير كلمة المرور"}</button>
+      </div>
+    </div>
+  );
+}
+
 /* ========================= SETTINGS ========================= */
 function Settings({state, commit}){
   const toast=useToast();
@@ -1719,7 +1793,7 @@ function App(){
     return <ToastHost><Login localUsers={FIREBASE_READY?null:state.users} onLocalLogin={setUser} authErr={authErr} setAuthErr={setAuthErr}/></ToastHost>;
   }
   if(!state) return loading;
-  return <ToastHost><Shell state={state} commit={commit} user={user} onLogout={logout}/></ToastHost>;
+  return <ToastHost><Shell state={state} commit={commit} user={user} onLogout={logout} onUserUpdate={patch=>setUser(u=>({...u,...patch}))}/></ToastHost>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>

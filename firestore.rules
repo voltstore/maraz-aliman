@@ -18,10 +18,15 @@ service cloud.firestore {
       return hasProfile() && (profile().role == 'manager' || profile().role == 'deputy' || profile().role == 'teacher');
     }
 
-    // ملفات الصلاحيات: يقرؤها أي مسجّل دخول، ويعدّلها المدير فقط
+    // ملفات الصلاحيات: يقرؤها أي مسجّل دخول
+    // المدير: كامل التحكم. المستخدم: يعدّل ملفه الخاص فقط بدون تغيير صلاحيته أو اسم مستخدمه
     match /maraz_users/{uid} {
-      allow read:  if signedIn();
-      allow write: if isManager();
+      allow read:            if signedIn();
+      allow create, delete:  if isManager();
+      allow update:          if isManager()
+                             || (request.auth.uid == uid
+                                 && request.resource.data.role == resource.data.role
+                                 && request.resource.data.username == resource.data.username);
     }
 
     // بيانات المدرسة (طلاب، حضور، لجان...): للكادر المصرّح فقط
