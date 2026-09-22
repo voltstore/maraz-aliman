@@ -195,16 +195,14 @@
 
   /* ---------- Modal ---------- */
   .overlay{position:fixed;inset:0;background:#221d1899;backdrop-filter:blur(3px);z-index:100;
-    overflow-y:auto;overscroll-behavior:contain;padding:24px 16px;animation:fade .18s ease both}
-  .modal{background:var(--paper-2);border-radius:18px;box-shadow:var(--shadow-lg);width:100%;max-width:560px;
-    border:1px solid var(--line);animation:pop .22s cubic-bezier(.2,.8,.2,1) both;margin:0 auto}
+    overflow-y:auto;padding:24px 16px;animation:fade .18s ease both}
+  .modal{background:var(--paper-2);border-radius:16px;box-shadow:var(--shadow-lg);width:100%;max-width:560px;
+    border:1px solid var(--line);margin:0 auto}
   .modal.wide{max-width:860px}
-  .modal-head{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;
-    position:sticky;top:0;background:var(--paper-2);z-index:2;border-radius:18px 18px 0 0}
+  .modal-head{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
   .modal-head h3{margin:0;font-size:20px}
   .modal-body{padding:22px 24px}
-  .modal-foot{padding:16px 24px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-start;
-    position:sticky;bottom:0;background:var(--paper-2);z-index:2;border-radius:0 0 18px 18px}
+  .modal-foot{padding:16px 24px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-start}
   .x{background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink-faint);line-height:1;padding:4px}
   .x:hover{color:var(--ink)}
 
