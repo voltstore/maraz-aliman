@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ثانوية مارز الإيمان — المنصة الإدارية</title>
+<meta name="description" content="منصة إدارية لثانوية مارز الإيمان: الحضور والغياب، إدارة الطلاب والمعلمين، ولجان الاختبارات." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=El+Messiri:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+<!-- Firebase (compat SDK — works without a build step) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<!-- React + Babel (single-file app, no bundler) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  :root{
+    --paper:#f6f1e7;
+    --paper-2:#fffdf8;
+    --paper-3:#efe8d8;
+    --ink:#221d18;
+    --ink-soft:#6a6055;
+    --ink-faint:#9a8f80;
+    --brand:#1f5d4f;
+    --brand-deep:#163f35;
+    --brand-soft:#e6efe9;
+    --accent:#c25a34;
+    --accent-soft:#f6e3d8;
+    --line:#e4dccc;
+    --line-strong:#d3c8b2;
+    --ok:#2f7d5b;
+    --ok-soft:#e3f0e8;
+    --danger:#b23a2e;
+    --danger-soft:#f6e0dc;
+    --warn:#c78a1e;
+    --warn-soft:#f7eccf;
+    --info:#3d6b8e;
+    --info-soft:#e2ebf2;
+    --shadow-sm:0 1px 2px rgba(34,29,24,.06);
+    --shadow:0 6px 24px -12px rgba(34,29,24,.35);
+    --shadow-lg:0 24px 60px -28px rgba(34,29,24,.5);
+    --r:14px;
+    --r-sm:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:"IBM Plex Sans Arabic",system-ui,sans-serif;
+    background:var(--paper);
+    color:var(--ink);
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(circle at 12% -10%, #ffffff8c 0, transparent 45%),
+                     radial-gradient(circle at 110% 0%, #e9f0ec66 0, transparent 40%);
+    background-attachment:fixed;
+  }
+  h1,h2,h3,h4,.display{font-family:"El Messiri",serif;font-weight:600;line-height:1.25}
+  button{font-family:inherit}
+  input,select,textarea{font-family:inherit}
+  ::selection{background:var(--brand);color:#fff}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:20px;border:2px solid var(--paper)}
+
+  /* ---------- Layout ---------- */
+  .app{display:flex;min-height:100vh}
+  .sidebar{
+    width:264px;flex-shrink:0;background:var(--brand-deep);
+    color:#eef3ef;padding:22px 16px;position:sticky;top:0;height:100vh;
+    display:flex;flex-direction:column;gap:6px;overflow-y:auto;
+  }
+  .brand{display:flex;gap:12px;align-items:center;padding:6px 8px 20px;margin-bottom:8px;border-bottom:1px solid #ffffff1f}
+  .brand .seal{
+    width:46px;height:46px;border-radius:13px;flex-shrink:0;display:grid;place-items:center;
+    background:linear-gradient(150deg,var(--accent),#9c3f22);color:#fff;font-family:"El Messiri";
+    font-size:22px;font-weight:700;box-shadow:0 8px 20px -8px #00000066;
+  }
+  .brand h1{font-size:18px;margin:0;color:#fff}
+  .brand span{font-size:12px;color:#ffffff9c;display:block;font-family:"IBM Plex Sans Arabic"}
+  .nav-item{
+    display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;cursor:pointer;
+    color:#d6e0da;font-size:15px;font-weight:500;transition:all .16s cubic-bezier(.4,0,.2,1);
+    border:1px solid transparent;position:relative;
+  }
+  .nav-item:hover{background:#ffffff14;color:#fff}
+  .nav-item.active{background:var(--paper);color:var(--brand-deep);font-weight:600;box-shadow:var(--shadow)}
+  .nav-item .ic{width:20px;text-align:center;font-size:17px}
+  .nav-sep{font-size:11px;color:#ffffff5c;padding:14px 13px 6px;letter-spacing:0;font-weight:600}
+  .nav-foot{margin-top:auto;padding-top:14px;border-top:1px solid #ffffff1f;font-size:12px;color:#ffffff85}
+
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding:16px 30px;background:#fffdf8cc;backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;
+  }
+  .topbar .page-title{font-size:23px;margin:0}
+  .topbar .sub{font-size:13px;color:var(--ink-soft);margin-top:-2px}
+  .content{padding:28px 34px 60px;max-width:1320px;width:100%;margin:0 auto;flex:1}
+  @media(min-width:1600px){ .content{max-width:1480px;padding:34px 48px 70px} }
+
+  .userchip{display:flex;align-items:center;gap:10px;background:var(--paper-2);border:1px solid var(--line);
+    padding:6px 8px 6px 14px;border-radius:40px;box-shadow:var(--shadow-sm)}
+  .userchip .av{width:34px;height:34px;border-radius:50%;background:var(--brand-soft);color:var(--brand-deep);
+    display:grid;place-items:center;font-weight:700;font-family:"El Messiri"}
+  .userchip .who{font-size:13px;font-weight:600;line-height:1.2}
+  .userchip .role{font-size:11px;color:var(--ink-soft)}
+
+  .menu-btn{display:none;background:none;border:1px solid var(--line);border-radius:10px;width:42px;height:42px;
+    font-size:20px;cursor:pointer;color:var(--ink)}
+
+  /* ---------- Cards / bits ---------- */
+  .card{background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow-sm)}
+  .card.pad{padding:22px}
+  .grid{display:grid;gap:18px}
+  .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+  .section-head h2{font-size:22px;margin:0}
+  .section-head p{margin:2px 0 0;color:var(--ink-soft);font-size:13.5px}
+  .eyebrow{font-size:12px;font-weight:600;color:var(--accent);margin-bottom:4px}
+
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;justify-content:center;
+    background:var(--brand);color:#fff;border:1px solid var(--brand-deep);
+    padding:10px 18px;border-radius:11px;font-size:14.5px;font-weight:600;cursor:pointer;
+    transition:transform .14s cubic-bezier(.4,0,.2,1),box-shadow .14s,background .14s;box-shadow:var(--shadow-sm);
+  }
+  .btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px #1f5d4f88;background:var(--brand-deep)}
+  .btn:active{transform:translateY(0)}
+  .btn.ghost{background:transparent;color:var(--brand-deep);border-color:var(--line-strong);box-shadow:none}
+  .btn.ghost:hover{background:var(--brand-soft)}
+  .btn.accent{background:var(--accent);border-color:#9c3f22}
+  .btn.accent:hover{background:#a5471f}
+  .btn.danger{background:transparent;color:var(--danger);border-color:var(--danger-soft)}
+  .btn.danger:hover{background:var(--danger-soft)}
+  .btn.sm{padding:7px 12px;font-size:13px;border-radius:9px}
+  .btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+
+  .field{display:block;margin-bottom:15px}
+  .field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--ink-soft)}
+  .input,select.input,textarea.input{
+    width:100%;padding:11px 14px;border:1px solid var(--line-strong);border-radius:var(--r-sm);
+    background:var(--paper-2);color:var(--ink);font-size:15px;transition:border .15s,box-shadow .15s;
+  }
+  .input:focus,select.input:focus,textarea.input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+
+  .tag{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:30px;font-size:12.5px;font-weight:600;
+    background:var(--paper-3);color:var(--ink-soft);border:1px solid var(--line)}
+  .tag.brand{background:var(--brand-soft);color:var(--brand-deep);border-color:#cfe0d7}
+  .tag.accent{background:var(--accent-soft);color:#9c3f22;border-color:#eccbba}
+
+  .pill{padding:4px 11px;border-radius:30px;font-size:12.5px;font-weight:600;display:inline-block}
+  .pill.present{background:var(--ok-soft);color:var(--ok)}
+  .pill.absent{background:var(--danger-soft);color:var(--danger)}
+  .pill.late{background:var(--warn-soft);color:#a06e12}
+  .pill.excused{background:var(--info-soft);color:var(--info)}
+
+  table.tbl{width:100%;border-collapse:collapse;font-size:14.5px}
+  table.tbl th{text-align:right;padding:11px 14px;font-size:12.5px;color:var(--ink-soft);font-weight:600;
+    border-bottom:2px solid var(--line);white-space:nowrap}
+  table.tbl td{padding:12px 14px;border-bottom:1px solid var(--line)}
+  table.tbl tr:last-child td{border-bottom:none}
+  table.tbl tbody tr{transition:background .12s}
+  table.tbl tbody tr:hover{background:var(--paper)}
+
+  .stat{background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r);padding:20px;position:relative;overflow:hidden}
+  .stat .k{font-size:13px;color:var(--ink-soft);font-weight:600}
+  .stat .v{font-size:32px;font-family:"El Messiri";font-weight:700;margin-top:4px;line-height:1}
+  .stat .foot{font-size:12px;color:var(--ink-faint);margin-top:8px}
+  .stat .glyph{position:absolute;left:-6px;top:-10px;font-size:64px;opacity:.06}
+
+  .bar-row{display:flex;align-items:center;gap:12px;margin-bottom:11px;font-size:13.5px}
+  .bar-row .lbl{width:120px;flex-shrink:0;color:var(--ink-soft);font-weight:500;text-align:left}
+  .bar-track{flex:1;height:12px;background:var(--paper-3);border-radius:20px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--brand),#2c7a68);transition:width .6s cubic-bezier(.2,.7,.2,1)}
+  .bar-fill.hot{background:linear-gradient(90deg,var(--accent),#d97a54)}
+  .bar-row .num{width:44px;text-align:left;font-weight:700;font-family:"El Messiri"}
+
+  /* ---------- Modal ---------- */
+  .overlay{position:fixed;inset:0;background:#221d1866;backdrop-filter:blur(3px);z-index:100;
+    display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;
+    animation:fade .18s ease both}
+  .modal{background:var(--paper-2);border-radius:18px;box-shadow:var(--shadow-lg);width:100%;max-width:560px;
+    border:1px solid var(--line);animation:pop .22s cubic-bezier(.2,.8,.2,1) both;margin:auto}
+  .modal.wide{max-width:860px}
+  .modal-head{padding:20px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .modal-head h3{margin:0;font-size:20px}
+  .modal-body{padding:22px 24px;max-height:70vh;overflow-y:auto}
+  .modal-foot{padding:16px 24px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-start}
+  .x{background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink-faint);line-height:1;padding:4px}
+  .x:hover{color:var(--ink)}
+
+  .empty{text-align:center;padding:50px 20px;color:var(--ink-faint)}
+  .empty .big{font-size:46px;opacity:.5;margin-bottom:8px}
+
+  .chk{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid var(--line-strong);
+    border-radius:9px;cursor:pointer;font-size:13.5px;background:var(--paper-2);transition:all .13s;margin:0 0 8px 8px}
+  .chk:hover{border-color:var(--brand)}
+  .chk.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand-deep);font-weight:600}
+  .chk.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:200;
+    background:var(--ink);color:#fff;padding:12px 22px;border-radius:12px;font-size:14px;font-weight:500;
+    box-shadow:var(--shadow-lg);animation:toastIn .3s cubic-bezier(.2,.8,.2,1) both}
+  .toast.ok{background:var(--brand-deep)}
+  .toast.err{background:var(--danger)}
+
+  .banner{padding:13px 16px;border-radius:12px;font-size:13.5px;display:flex;gap:10px;align-items:flex-start;margin-bottom:18px}
+  .banner.warn{background:var(--warn-soft);color:#8a6410;border:1px solid #ecd28f}
+  .banner.info{background:var(--info-soft);color:#2f5573;border:1px solid #c4d6e4}
+
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  @keyframes pop{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+  @keyframes toastIn{from{opacity:0;transform:translate(-50%,14px)}to{opacity:1;transform:translate(-50%,0)}}
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .rise{animation:rise .4s cubic-bezier(.2,.7,.2,1) both}
+
+  /* ---------- Login ---------- */
+  .login-wrap{min-height:100vh;display:grid;grid-template-columns:1.1fr .9fr}
+  .login-art{background:linear-gradient(160deg,var(--brand-deep),#0f2f28);color:#fff;padding:60px 54px;
+    display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}
+  .login-art:after{content:"";position:absolute;inset:0;background:
+    radial-gradient(circle at 80% 20%, #c25a3433 0, transparent 45%),
+    radial-gradient(circle at 10% 90%, #ffffff12 0, transparent 40%)}
+  .login-art .seal-lg{width:74px;height:74px;border-radius:20px;background:linear-gradient(150deg,var(--accent),#9c3f22);
+    display:grid;place-items:center;font-family:"El Messiri";font-size:34px;font-weight:700;box-shadow:0 16px 40px -14px #000;z-index:1}
+  .login-art h1{font-size:40px;margin:20px 0 10px;z-index:1;position:relative}
+  .login-art p{color:#ffffffcc;font-size:16px;max-width:360px;z-index:1;position:relative}
+  .login-form{display:grid;place-items:center;padding:40px}
+  .login-box{width:100%;max-width:380px;animation:rise .5s ease both}
+  @media(max-width:860px){
+    .login-wrap{grid-template-columns:1fr}
+    .login-art{display:none}
+    .sidebar{position:fixed;z-index:60;transform:translateX(100%);transition:transform .25s;box-shadow:var(--shadow-lg)}
+    .sidebar.open{transform:none}
+    .menu-btn{display:grid;place-items:center}
+    .content{padding:20px 16px 50px}
+    .topbar{padding:14px 16px}
+    .login-form{padding:24px 16px}
+  }
+  .scrim{display:none}
+  .scrim.show{display:block;position:fixed;inset:0;background:#0007;z-index:55}
+
+  /* ---------- Print (PDF export) ---------- */
+  @media print{
+    body{background:#fff}
+    .no-print{display:none !important}
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+/* ============================================================
+   إعدادات Firebase — ضع هنا إعدادات مشروعك من Firebase Console.
+   طالما القيم كما هي (placeholder) سيعمل الموقع بالحفظ المحلي فقط.
+   ============================================================ */
+window.FIREBASE_CONFIG = {
+  apiKey: "PUT_YOUR_API_KEY",
+  authDomain: "PUT_YOUR_PROJECT.firebaseapp.com",
+  projectId: "PUT_YOUR_PROJECT",
+  storageBucket: "PUT_YOUR_PROJECT.appspot.com",
+  messagingSenderId: "PUT_SENDER_ID",
+  appId: "PUT_APP_ID"
+};
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+/* ========================= Storage layer ========================= */
+const LS_KEY = "maraz_school_state_v1";
+const FB = window.FIREBASE_CONFIG;
+const FIREBASE_READY = FB && FB.apiKey && !FB.apiKey.startsWith("PUT_");
+let fdb = null;
+if (FIREBASE_READY) {
+  try { firebase.initializeApp(FB); fdb = firebase.firestore(); }
+  catch(e){ console.warn("Firebase init failed, falling back to local", e); }
+}
+
+const uid = () => Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-3);
+const todayISO = () => new Date().toISOString().slice(0,10);
+const WEEKDAYS = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
+const weekdayOf = iso => WEEKDAYS[new Date(iso+"T00:00:00").getDay()];
+
+const SUBJECTS = [
+  "التقنية الرقمية","التربية الصحية والبدنية","اللغة الإنجليزية","التفكير الناقد",
+  "الرياضيات","الكفايات اللغوية","القرآن الكريم","الكيمياء","الأحياء","الفيزياء",
+  "التاريخ","التوحيد","الحديث","الهندسة","الإدارة المالية","مقدمة في الأعمال",
+  "الفنون","اللياقة والثقافة الصحية"
+];
+
+const DEFAULT_STATE = {
+  meta:{ schoolName:"ثانوية مارز الإيمان", sectionsCount:17, absenceThreshold:5 },
+  grades:[
+    {id:uid(), name:"أول ثانوي", from:1, to:6},
+    {id:uid(), name:"ثاني ثانوي", from:7, to:12},
+    {id:uid(), name:"ثالث ثانوي", from:13, to:17},
+  ],
+  users:[
+    {id:uid(), username:"admin", password:"1234", role:"manager", name:"مدير الثانوية"},
+    {id:uid(), username:"wakeel", password:"1234", role:"deputy", name:"وكيل الشؤون"},
+  ],
+  teachers:[],
+  students:[],
+  attendance:{},        // { 'YYYY-MM-DD': { studentId: 'present'|'absent'|'late'|'excused' } }
+  examSchedules:{},      // { sectionNumber: [ {id,date,subject,time} ] }
+  committees:[],         // [ {id,number,subject,date,venue,sectionA,sectionB,studentIds:[],approved} ]
+};
+
+function loadLocal(){
+  try{ const s = JSON.parse(localStorage.getItem(LS_KEY)); return s || null; }catch(e){ return null; }
+}
+function saveLocal(state){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){} }
+
+/* ========================= App root ========================= */
+function useStore(){
+  const [state,setState] = useState(null);
+  const stateRef = useRef(null);
+  stateRef.current = state;
+
+  useEffect(()=>{
+    if (fdb){
+      const ref = fdb.collection("maraz").doc("state");
+      const unsub = ref.onSnapshot(snap=>{
+        if (snap.exists){ setState(snap.data()); }
+        else { const init = loadLocal() || DEFAULT_STATE; ref.set(init); setState(init); }
+      }, err=>{ console.warn(err); setState(loadLocal()||DEFAULT_STATE); });
+      return unsub;
+    } else {
+      setState(loadLocal() || DEFAULT_STATE);
+    }
+  },[]);
+
+  const commit = useCallback((updater)=>{
+    setState(prev=>{
+      const next = typeof updater==="function" ? updater(prev) : updater;
+      saveLocal(next);
+      if (fdb){ fdb.collection("maraz").doc("state").set(next).catch(e=>console.warn(e)); }
+      return next;
+    });
+  },[]);
+
+  return [state, commit];
+}
+
+/* ========================= Helpers ========================= */
+const gradeForSection = (sec, grades) =>
+  grades.find(g => sec>=g.from && sec<=g.to) || null;
+const gradeName = (sec, grades) => (gradeForSection(sec,grades)||{}).name || "غير مصنّف";
+const sectionsRange = count => Array.from({length:count},(_,i)=>i+1);
+
+/* ========================= Toast ========================= */
+const ToastCtx = React.createContext(()=>{});
+function ToastHost({children}){
+  const [t,setT] = useState(null);
+  const show = useCallback((msg,type="ok")=>{ setT({msg,type,k:Date.now()}); },[]);
+  useEffect(()=>{ if(!t) return; const id=setTimeout(()=>setT(null),2600); return ()=>clearTimeout(id); },[t]);
+  return (
+    <ToastCtx.Provider value={show}>
+      {children}
+      {t && <div key={t.k} className={"toast "+t.type}>{t.msg}</div>}
+    </ToastCtx.Provider>
+  );
+}
+const useToast = ()=>React.useContext(ToastCtx);
+
+/* ========================= Modal ========================= */
+function Modal({title, onClose, children, foot, wide}){
+  useEffect(()=>{
+    const h=e=>{ if(e.key==="Escape") onClose(); };
+    window.addEventListener("keydown",h); return ()=>window.removeEventListener("keydown",h);
+  },[onClose]);
+  return (
+    <div className="overlay" onMouseDown={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div className={"modal"+(wide?" wide":"")}>
+        <div className="modal-head"><h3>{title}</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="modal-body">{children}</div>
+        {foot && <div className="modal-foot">{foot}</div>}
+      </div>
+    </div>
+  );
+}
+
+function Confirm({text, onYes, onClose, danger}){
+  return (
+    <Modal title="تأكيد" onClose={onClose}
+      foot={<>
+        <button className={"btn "+(danger?"danger":"")} onClick={()=>{onYes();onClose();}}>نعم، متأكد</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button>
+      </>}>
+      <p style={{margin:0,fontSize:15}}>{text}</p>
+    </Modal>
+  );
+}
+
+/* ========================= LOGIN ========================= */
+function Login({state, onLogin}){
+  const [u,setU]=useState(""); const [p,setP]=useState(""); const [err,setErr]=useState("");
+  const submit=e=>{
+    e.preventDefault();
+    const found = state.users.find(x=>x.username===u.trim() && x.password===p);
+    if(found){ onLogin(found); } else { setErr("اسم المستخدم أو كلمة المرور غير صحيحة"); }
+  };
+  return (
+    <div className="login-wrap">
+      <div className="login-art">
+        <div className="seal-lg">م</div>
+        <div>
+          <h1>ثانوية مارز الإيمان</h1>
+          <p>المنصة الإدارية — الحضور والغياب، إدارة الطلاب والمعلمين، وتوزيع لجان الاختبارات النهائية في مكان واحد.</p>
+        </div>
+        <div style={{color:"#ffffff88",fontSize:13,zIndex:1,position:"relative"}}>
+          {FIREBASE_READY ? "متصل بقاعدة بيانات مشتركة" : "وضع تجريبي محلي — لم تُضبط قاعدة البيانات بعد"}
+          <div style={{marginTop:4,color:"#ffffff5c",fontSize:12}}>من صنع مصطفى عبدالله أحمد</div>
+        </div>
+      </div>
+      <div className="login-form">
+        <form className="login-box" onSubmit={submit}>
+          <div className="eyebrow">تسجيل الدخول</div>
+          <h2 style={{fontSize:28,margin:"0 0 6px"}}>أهلاً بك</h2>
+          <p style={{color:"var(--ink-soft)",marginTop:0,fontSize:14}}>ادخل بيانات حسابك للمتابعة.</p>
+          <div className="field">
+            <label>اسم المستخدم</label>
+            <input className="input" value={u} onChange={e=>setU(e.target.value)} placeholder="admin" autoFocus/>
+          </div>
+          <div className="field">
+            <label>كلمة المرور</label>
+            <input className="input" type="password" value={p} onChange={e=>setP(e.target.value)} placeholder="••••"/>
+          </div>
+          {err && <div style={{color:"var(--danger)",fontSize:13,marginBottom:12}}>{err}</div>}
+          <button className="btn" style={{width:"100%"}} type="submit">دخول</button>
+          <p style={{fontSize:12,color:"var(--ink-faint)",marginTop:16,textAlign:"center"}}>
+            تجريبي: admin / 1234 &nbsp;·&nbsp; wakeel / 1234
+          </p>
+          <p style={{fontSize:12,color:"var(--ink-faint)",marginTop:4,textAlign:"center"}}>
+            من صنع مصطفى عبدالله أحمد
+          </p>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ========================= NAV ========================= */
+const NAV = [
+  {sep:"الرئيسية"},
+  {id:"dashboard", label:"لوحة المعلومات", ic:"◧", roles:["manager","deputy","teacher"]},
+  {id:"attendance", label:"الحضور والغياب", ic:"✓", roles:["manager","deputy","teacher"]},
+  {id:"stats", label:"التقارير والإحصائيات", ic:"◔", roles:["manager","deputy"]},
+  {sep:"الإدارة"},
+  {id:"students", label:"الطلاب", ic:"◉", roles:["manager","deputy"]},
+  {id:"teachers", label:"المعلمون", ic:"✎", roles:["manager","deputy"]},
+  {sep:"الاختبارات"},
+  {id:"schedule", label:"جدول الاختبارات", ic:"▤", roles:["manager","deputy"]},
+  {id:"committees", label:"لجان الاختبارات", ic:"⬚", roles:["manager","deputy"]},
+  {sep:"النظام"},
+  {id:"settings", label:"الإعدادات", ic:"⚙", roles:["manager","deputy"]},
+  {id:"accounts", label:"الحسابات", ic:"◈", roles:["manager"]},
+];
+
+/* ========================= SHELL ========================= */
+function Shell({state, commit, user, onLogout}){
+  const [page,setPage]=useState("dashboard");
+  const [navOpen,setNavOpen]=useState(false);
+  const items = NAV.filter(n=>n.sep || n.roles.includes(user.role));
+  const active = NAV.find(n=>n.id===page) || {label:"لوحة المعلومات"};
+
+  const go = id => { setPage(id); setNavOpen(false); };
+
+  const Page = {
+    dashboard:<Dashboard state={state} user={user} go={go}/>,
+    attendance:<Attendance state={state} commit={commit} user={user}/>,
+    stats:<Stats state={state}/>,
+    students:<Students state={state} commit={commit}/>,
+    teachers:<Teachers state={state} commit={commit}/>,
+    schedule:<Schedule state={state} commit={commit}/>,
+    committees:<Committees state={state} commit={commit}/>,
+    settings:<Settings state={state} commit={commit}/>,
+    accounts:<Accounts state={state} commit={commit} user={user}/>,
+  }[page];
+
+  return (
+    <div className="app">
+      <div className={"scrim"+(navOpen?" show":"")} onClick={()=>setNavOpen(false)}/>
+      <aside className={"sidebar"+(navOpen?" open":"")}>
+        <div className="brand">
+          <div className="seal">م</div>
+          <div><h1>مارز الإيمان</h1><span>المنصة الإدارية</span></div>
+        </div>
+        {items.map((n,i)=> n.sep
+          ? <div className="nav-sep" key={"s"+i}>{n.sep}</div>
+          : <div key={n.id} className={"nav-item"+(page===n.id?" active":"")} onClick={()=>go(n.id)}>
+              <span className="ic">{n.ic}</span>{n.label}
+            </div>
+        )}
+        <div className="nav-foot">
+          {FIREBASE_READY ? "◉ متصل بالسحابة" : "○ حفظ محلي"} · الإصدار 1.0
+          <div style={{marginTop:6,color:"#ffffff66"}}>من صنع مصطفى عبدالله أحمد</div>
+        </div>
+      </aside>
+
+      <div className="main">
+        <div className="topbar">
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <button className="menu-btn no-print" onClick={()=>setNavOpen(v=>!v)}>☰</button>
+            <div>
+              <h2 className="page-title">{active.label}</h2>
+              <div className="sub">{state.meta.schoolName}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}} className="no-print">
+            <div className="userchip">
+              <div className="who">{user.name}<div className="role">{roleLabel(user.role)}</div></div>
+              <div className="av">{user.name.slice(0,1)}</div>
+            </div>
+            <button className="btn ghost sm" onClick={onLogout}>خروج</button>
+          </div>
+        </div>
+        <div className="content" key={page}>{Page}</div>
+      </div>
+    </div>
+  );
+}
+const roleLabel = r => ({manager:"مدير",deputy:"وكيل",teacher:"معلم"}[r]||r);
+
+/* ========================= DASHBOARD ========================= */
+function Dashboard({state, user, go}){
+  const today = todayISO();
+  const rec = state.attendance[today] || {};
+  const counts = {present:0,absent:0,late:0,excused:0};
+  Object.values(rec).forEach(s=>counts[s]!==undefined && counts[s]++);
+  const marked = Object.keys(rec).length;
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div>
+          <div className="eyebrow">{weekdayOf(today)} · {today}</div>
+          <h2>أهلاً {user.name} 👋</h2>
+          <p>نظرة سريعة على وضع المدرسة اليوم.</p>
+        </div>
+        <button className="btn" onClick={()=>go("attendance")}>تسجيل حضور اليوم</button>
+      </div>
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))"}}>
+        <Stat k="إجمالي الطلاب" v={state.students.length} glyph="◉" foot="مسجّلين في النظام"/>
+        <Stat k="حاضرون اليوم" v={counts.present} glyph="✓" foot={marked?`من ${marked} مسجّل`:"لم يبدأ التسجيل"}/>
+        <Stat k="غائبون اليوم" v={counts.absent} glyph="✕" foot={counts.excused?`${counts.excused} بعذر`:"بدون أعذار"}/>
+        <Stat k="متأخرون اليوم" v={counts.late} glyph="◔" foot="حالات تأخير"/>
+      </div>
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",marginTop:18}}>
+        <QuickCard title="الطلاب" desc="إضافة، نقل، وتعديل بيانات الطلاب" ic="◉" onClick={()=>go("students")}/>
+        <QuickCard title="المعلمون" desc="ربط المعلمين بالمواد والشُّعب" ic="✎" onClick={()=>go("teachers")}/>
+        <QuickCard title="لجان الاختبارات" desc="توزيع الطلاب على لجان الاختبار" ic="⬚" onClick={()=>go("committees")}/>
+        <QuickCard title="التقارير" desc="إحصائيات الغياب والتأخير" ic="◔" onClick={()=>go("stats")}/>
+      </div>
+    </div>
+  );
+}
+function Stat({k,v,glyph,foot}){
+  return <div className="stat"><span className="glyph">{glyph}</span>
+    <div className="k">{k}</div><div className="v">{v}</div><div className="foot">{foot}</div></div>;
+}
+function QuickCard({title,desc,ic,onClick}){
+  return (
+    <div className="card pad" style={{cursor:"pointer"}} onClick={onClick}>
+      <div style={{fontSize:26,color:"var(--brand)",marginBottom:8}}>{ic}</div>
+      <h3 style={{margin:"0 0 4px",fontSize:18}}>{title}</h3>
+      <p style={{margin:0,color:"var(--ink-soft)",fontSize:13.5}}>{desc}</p>
+    </div>
+  );
+}
+
+/* ========================= ATTENDANCE ========================= */
+function Attendance({state, commit, user}){
+  const toast=useToast();
+  const [date,setDate]=useState(todayISO());
+  const [sec,setSec]=useState(1);
+  const secs = sectionsRange(state.meta.sectionsCount);
+  const roster = state.students.filter(s=>s.section===sec);
+  const rec = state.attendance[date] || {};
+
+  const setStatus=(sid,status)=>{
+    commit(prev=>{
+      const day = {...(prev.attendance[date]||{})};
+      day[sid]=status;
+      return {...prev, attendance:{...prev.attendance, [date]:day}};
+    });
+  };
+  const markAll=status=>{
+    commit(prev=>{
+      const day={...(prev.attendance[date]||{})};
+      roster.forEach(s=>day[s.id]=status);
+      return {...prev, attendance:{...prev.attendance,[date]:day}};
+    });
+    toast("تم تحديث الشعبة كاملة");
+  };
+  const isPast = date < todayISO();
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>الحضور والغياب</h2><p>سجّل الحضور اليومي، أو عدّل حالة سابقة بأثر رجعي.</p></div>
+      </div>
+
+      {isPast && <div className="banner info">✎ أنت تعدّل يوماً سابقاً ({weekdayOf(date)}). يمكنك تغيير أي حالة — مثلاً من «غائب» إلى «غائب بعذر».</div>}
+
+      <div className="card pad" style={{marginBottom:18}}>
+        <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <div className="field" style={{margin:0,minWidth:170}}>
+            <label>التاريخ</label>
+            <input className="input" type="date" value={date} max={todayISO()} onChange={e=>setDate(e.target.value)}/>
+          </div>
+          <div className="field" style={{margin:0,minWidth:170}}>
+            <label>الشعبة</label>
+            <select className="input" value={sec} onChange={e=>setSec(+e.target.value)}>
+              {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,state.grades)}</option>)}
+            </select>
+          </div>
+          <div style={{marginRight:"auto",display:"flex",gap:8}}>
+            <button className="btn ghost sm" onClick={()=>markAll("present")} disabled={!roster.length}>تحضير الكل</button>
+            <button className="btn ghost sm" onClick={()=>markAll("absent")} disabled={!roster.length}>تغييب الكل</button>
+          </div>
+        </div>
+      </div>
+
+      {roster.length===0
+        ? <div className="card"><div className="empty"><div className="big">◉</div>لا يوجد طلاب في شعبة {sec} بعد.<br/><span style={{fontSize:13}}>أضف طلاباً من صفحة «الطلاب».</span></div></div>
+        : <div className="card">
+            <table className="tbl">
+              <thead><tr><th>#</th><th>اسم الطالب</th><th>الحالة</th><th style={{width:"46%"}}>تسجيل</th></tr></thead>
+              <tbody>
+                {roster.map((s,i)=>{
+                  const st=rec[s.id];
+                  return <tr key={s.id}>
+                    <td style={{color:"var(--ink-faint)"}}>{i+1}</td>
+                    <td style={{fontWeight:600}}>{s.name}</td>
+                    <td>{st?<span className={"pill "+st}>{statusLabel(st)}</span>:<span style={{color:"var(--ink-faint)",fontSize:13}}>—</span>}</td>
+                    <td><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {["present","absent","late","excused"].map(k=>
+                        <button key={k} onClick={()=>setStatus(s.id,k)}
+                          className={"btn sm "+(st===k?"":"ghost")}
+                          style={st===k?statusBtn(k):{}}>{statusLabel(k)}</button>)}
+                    </div></td>
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>}
+    </div>
+  );
+}
+const statusLabel = s => ({present:"حاضر",absent:"غائب",late:"متأخر",excused:"غائب بعذر"}[s]||s);
+const statusBtn = k => ({
+  present:{background:"var(--ok)",borderColor:"var(--ok)"},
+  absent:{background:"var(--danger)",borderColor:"var(--danger)"},
+  late:{background:"var(--warn)",borderColor:"var(--warn)",color:"#3a2c07"},
+  excused:{background:"var(--info)",borderColor:"var(--info)"},
+}[k]);
+
+/* ========================= STATS ========================= */
+function Stats({state}){
+  const {students,attendance,grades,meta} = state;
+  const secOf = {}; students.forEach(s=>secOf[s.id]=s.section);
+
+  const data = useMemo(()=>{
+    const perSection={}, perGrade={}, perDay={}, perStudent={};
+    let totAbsent=0, totLate=0, totRecords=0;
+    Object.entries(attendance).forEach(([date,day])=>{
+      const wd=weekdayOf(date);
+      Object.entries(day).forEach(([sid,st])=>{
+        totRecords++;
+        const sec=secOf[sid]; if(sec===undefined) return;
+        const g=gradeName(sec,grades);
+        if(st==="absent"){
+          totAbsent++;
+          perSection[sec]=(perSection[sec]||0)+1;
+          perGrade[g]=(perGrade[g]||0)+1;
+          perDay[wd]=(perDay[wd]||0)+1;
+          perStudent[sid]=(perStudent[sid]||0)+1;
+        }
+        if(st==="late") totLate++;
+      });
+    });
+    return {perSection,perGrade,perDay,perStudent,totAbsent,totLate,totRecords};
+  },[attendance,students,grades]);
+
+  const topStudents = Object.entries(data.perStudent)
+    .map(([sid,c])=>({name:(students.find(s=>s.id===sid)||{}).name||"—", section:secOf[sid], c}))
+    .sort((a,b)=>b.c-a.c);
+  const alerts = topStudents.filter(s=>s.c>=meta.absenceThreshold);
+
+  const daySorted = WEEKDAYS.filter(d=>data.perDay[d]).map(d=>({d,c:data.perDay[d]})).sort((a,b)=>b.c-a.c);
+  const secSorted = Object.entries(data.perSection).map(([s,c])=>({s:+s,c})).sort((a,b)=>b.c-a.c);
+  const gradeSorted = Object.entries(data.perGrade).map(([g,c])=>({g,c})).sort((a,b)=>b.c-a.c);
+  const maxDay=Math.max(1,...daySorted.map(x=>x.c));
+  const maxSec=Math.max(1,...secSorted.map(x=>x.c));
+  const maxGrade=Math.max(1,...gradeSorted.map(x=>x.c));
+
+  if(!data.totRecords) return <div className="card rise"><div className="empty"><div className="big">◔</div>لا توجد بيانات حضور بعد.<br/><span style={{fontSize:13}}>ابدأ بتسجيل الحضور لتظهر الإحصائيات.</span></div></div>;
+
+  return (
+    <div className="rise">
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",marginBottom:20}}>
+        <Stat k="إجمالي الغياب" v={data.totAbsent} glyph="✕" foot="حالة غياب مسجّلة"/>
+        <Stat k="إجمالي التأخير" v={data.totLate} glyph="◔" foot="حالة تأخير"/>
+        <Stat k="طلاب فوق الحد" v={alerts.length} glyph="!" foot={`الحد: ${meta.absenceThreshold} غياب`}/>
+        <Stat k="أيام مسجّلة" v={Object.keys(attendance).length} glyph="▤" foot="يوم دراسي"/>
+      </div>
+
+      {alerts.length>0 &&
+        <div className="banner warn">
+          <span>⚠</span>
+          <div><b>تنبيه: طلاب كثيرو الغياب.</b> {alerts.slice(0,6).map(a=>a.name).join("، ")}{alerts.length>6?` و${alerts.length-6} غيرهم`:""}.</div>
+        </div>}
+
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))"}}>
+        <div className="card pad">
+          <h3 style={{marginTop:0}}>أكثر الأيام غياباً</h3>
+          {daySorted.map(x=><Bar key={x.d} label={x.d} val={x.c} max={maxDay} hot={x===daySorted[0]}/>)}
+        </div>
+        <div className="card pad">
+          <h3 style={{marginTop:0}}>أكثر الصفوف غياباً</h3>
+          {gradeSorted.map(x=><Bar key={x.g} label={x.g} val={x.c} max={maxGrade} hot={x===gradeSorted[0]}/>)}
+        </div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:"1fr",marginTop:18}}>
+        <div className="card pad">
+          <h3 style={{marginTop:0}}>أكثر الشُّعب غياباً</h3>
+          {secSorted.slice(0,10).map(x=><Bar key={x.s} label={`شعبة ${x.s} · ${gradeName(x.s,grades)}`} val={x.c} max={maxSec} hot={x===secSorted[0]}/>)}
+        </div>
+      </div>
+
+      <div className="card" style={{marginTop:18}}>
+        <div style={{padding:"18px 22px 0"}}><h3 style={{margin:0}}>الطلاب الأكثر غياباً</h3></div>
+        <table className="tbl" style={{marginTop:10}}>
+          <thead><tr><th>#</th><th>الطالب</th><th>الشعبة</th><th>الصف</th><th>عدد الغياب</th></tr></thead>
+          <tbody>
+            {topStudents.slice(0,15).map((s,i)=><tr key={i}>
+              <td style={{color:"var(--ink-faint)"}}>{i+1}</td>
+              <td style={{fontWeight:600}}>{s.name}</td>
+              <td>شعبة {s.section}</td>
+              <td>{gradeName(s.section,grades)}</td>
+              <td><span className={"pill "+(s.c>=meta.absenceThreshold?"absent":"late")}>{s.c}</span></td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+function Bar({label,val,max,hot}){
+  return <div className="bar-row">
+    <span className="lbl">{label}</span>
+    <div className="bar-track"><div className={"bar-fill"+(hot?" hot":"")} style={{width:(val/max*100)+"%"}}/></div>
+    <span className="num">{val}</span>
+  </div>;
+}
+
+/* ========================= STUDENTS ========================= */
+function Students({state, commit}){
+  const toast=useToast();
+  const [q,setQ]=useState(""); const [fSec,setFSec]=useState("all");
+  const [modal,setModal]=useState(null); // {mode:'add'|'edit'|'move', student}
+  const [confirm,setConfirm]=useState(null);
+  const secs=sectionsRange(state.meta.sectionsCount);
+
+  const list = state.students
+    .filter(s=>fSec==="all"||s.section===+fSec)
+    .filter(s=>s.name.includes(q.trim()))
+    .sort((a,b)=>a.section-b.section || a.name.localeCompare(b.name,"ar"));
+
+  const save=(data)=>{
+    if(modal.mode==="add"){
+      commit(p=>({...p,students:[...p.students,{id:uid(),name:data.name.trim(),section:data.section}]}));
+      toast("تمت إضافة الطالب");
+    } else {
+      commit(p=>({...p,students:p.students.map(s=>s.id===modal.student.id?{...s,name:data.name.trim(),section:data.section}:s)}));
+      toast("تم الحفظ");
+    }
+    setModal(null);
+  };
+  const remove=(s)=>{
+    commit(p=>({
+      ...p,
+      students:p.students.filter(x=>x.id!==s.id),
+      committees:p.committees.map(c=>({...c,studentIds:c.studentIds.filter(id=>id!==s.id)})),
+    }));
+    toast("تم حذف الطالب","err");
+  };
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>الطلاب</h2><p>{state.students.length} طالب · إضافة، نقل بين الشُّعب، تعديل، وحذف.</p></div>
+        <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة طالب</button>
+      </div>
+
+      <div className="card pad" style={{marginBottom:16,display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end"}}>
+        <div className="field" style={{margin:0,flex:1,minWidth:200}}>
+          <label>بحث بالاسم</label>
+          <input className="input" value={q} onChange={e=>setQ(e.target.value)} placeholder="اكتب اسم الطالب..."/>
+        </div>
+        <div className="field" style={{margin:0,minWidth:180}}>
+          <label>تصفية بالشعبة</label>
+          <select className="input" value={fSec} onChange={e=>setFSec(e.target.value)}>
+            <option value="all">كل الشُّعب</option>
+            {secs.map(n=><option key={n} value={n}>شعبة {n}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {list.length===0
+        ? <div className="card"><div className="empty"><div className="big">◉</div>لا يوجد طلاب مطابقون.</div></div>
+        : <div className="card">
+            <table className="tbl">
+              <thead><tr><th>#</th><th>الاسم</th><th>الشعبة</th><th>الصف</th><th style={{width:1}}>إجراءات</th></tr></thead>
+              <tbody>
+                {list.map((s,i)=><tr key={s.id}>
+                  <td style={{color:"var(--ink-faint)"}}>{i+1}</td>
+                  <td style={{fontWeight:600}}>{s.name}</td>
+                  <td><span className="tag brand">شعبة {s.section}</span></td>
+                  <td>{gradeName(s.section,state.grades)}</td>
+                  <td><div style={{display:"flex",gap:6}}>
+                    <button className="btn ghost sm" onClick={()=>setModal({mode:"edit",student:s})}>تعديل</button>
+                    <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف الطالب «${s.name}»؟`,onYes:()=>remove(s)})}>حذف</button>
+                  </div></td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>}
+
+      {modal && <StudentForm mode={modal.mode} student={modal.student} secs={secs} grades={state.grades} onClose={()=>setModal(null)} onSave={save}/>}
+      {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
+    </div>
+  );
+}
+function StudentForm({mode,student,secs,grades,onClose,onSave}){
+  const [name,setName]=useState(student?.name||"");
+  const [section,setSection]=useState(student?.section||secs[0]);
+  const valid=name.trim().length>=2;
+  return (
+    <Modal title={mode==="add"?"إضافة طالب":"تعديل بيانات الطالب"} onClose={onClose}
+      foot={<>
+        <button className="btn" disabled={!valid} onClick={()=>onSave({name,section})}>حفظ</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button>
+      </>}>
+      <div className="field"><label>اسم الطالب</label>
+        <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="الاسم الكامل"/></div>
+      <div className="field"><label>الشعبة {mode==="edit"&&"(تغيير الشعبة = نقل الطالب)"}</label>
+        <select className="input" value={section} onChange={e=>setSection(+e.target.value)}>
+          {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,grades)}</option>)}
+        </select></div>
+    </Modal>
+  );
+}
+
+/* ========================= TEACHERS ========================= */
+function Teachers({state, commit}){
+  const toast=useToast();
+  const [modal,setModal]=useState(null);
+  const [confirm,setConfirm]=useState(null);
+  const secs=sectionsRange(state.meta.sectionsCount);
+
+  const save=(data)=>{
+    if(modal.mode==="add"){ commit(p=>({...p,teachers:[...p.teachers,{id:uid(),...data}]})); toast("تمت إضافة المعلم"); }
+    else { commit(p=>({...p,teachers:p.teachers.map(t=>t.id===modal.teacher.id?{...t,...data}:t)})); toast("تم الحفظ"); }
+    setModal(null);
+  };
+  const remove=t=>{ commit(p=>({...p,teachers:p.teachers.filter(x=>x.id!==t.id)})); toast("تم حذف المعلم","err"); };
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>المعلمون</h2><p>{state.teachers.length} معلم · اربط كل معلم بموادّه وشُعبه.</p></div>
+        <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة معلم</button>
+      </div>
+      {state.teachers.length===0
+        ? <div className="card"><div className="empty"><div className="big">✎</div>لا يوجد معلمون بعد.</div></div>
+        : <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))"}}>
+            {state.teachers.map(t=><div className="card pad" key={t.id}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <h3 style={{margin:"0 0 3px",fontSize:18}}>{t.name}</h3>
+                  <div style={{fontSize:12.5,color:"var(--ink-soft)"}}>{t.sections?.length||0} شعبة · {t.subjects?.length||0} مادة</div>
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  <button className="btn ghost sm" onClick={()=>setModal({mode:"edit",teacher:t})}>تعديل</button>
+                  <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف المعلم «${t.name}»؟`,onYes:()=>remove(t)})}>حذف</button>
+                </div>
+              </div>
+              <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:6}}>
+                {(t.subjects||[]).map(s=><span className="tag accent" key={s}>{s}</span>)}
+              </div>
+              <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:6}}>
+                {(t.sections||[]).map(s=><span className="tag" key={s}>شعبة {s}</span>)}
+              </div>
+            </div>)}
+          </div>}
+      {modal && <TeacherForm mode={modal.mode} teacher={modal.teacher} secs={secs} grades={state.grades} onClose={()=>setModal(null)} onSave={save}/>}
+      {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
+    </div>
+  );
+}
+function TeacherForm({mode,teacher,secs,grades,onClose,onSave}){
+  const [name,setName]=useState(teacher?.name||"");
+  const [subjects,setSubjects]=useState(teacher?.subjects||[]);
+  const [sections,setSections]=useState(teacher?.sections||[]);
+  const toggle=(arr,set,v)=>set(arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]);
+  const valid=name.trim().length>=3 && subjects.length>0;
+  return (
+    <Modal title={mode==="add"?"إضافة معلم":"تعديل المعلم"} onClose={onClose} wide
+      foot={<>
+        <button className="btn" disabled={!valid} onClick={()=>onSave({name:name.trim(),subjects,sections})}>حفظ</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button>
+      </>}>
+      <div className="field"><label>الاسم الثلاثي</label>
+        <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="مثال: بدر محمد العتيبي"/></div>
+      <div className="field"><label>المواد التي يدرّسها (اختر واحدة أو أكثر)</label>
+        <div style={{display:"flex",flexWrap:"wrap"}}>
+          {SUBJECTS.map(s=><span key={s} className={"chk"+(subjects.includes(s)?" on":"")} onClick={()=>toggle(subjects,setSubjects,s)}>{s}</span>)}
+        </div></div>
+      <div className="field" style={{margin:0}}><label>الشُّعب التي يدرّسها</label>
+        <div style={{display:"flex",flexWrap:"wrap"}}>
+          {secs.map(n=><span key={n} className={"chk"+(sections.includes(n)?" on":"")} onClick={()=>toggle(sections,setSections,n)}>شعبة {n} · {gradeName(n,grades)}</span>)}
+        </div></div>
+    </Modal>
+  );
+}
+
+/* ========================= EXAM SCHEDULE ========================= */
+function Schedule({state, commit}){
+  const toast=useToast();
+  const secs=sectionsRange(state.meta.sectionsCount);
+  const [sec,setSec]=useState(1);
+  const [copyOpen,setCopyOpen]=useState(false);
+  const rows=(state.examSchedules[sec]||[]).slice().sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+
+  const add=()=>{
+    const row={id:uid(),date:todayISO(),subject:SUBJECTS[0],time:"08:00"};
+    commit(p=>({...p,examSchedules:{...p.examSchedules,[sec]:[...(p.examSchedules[sec]||[]),row]}}));
+  };
+  const upd=(id,patch)=>commit(p=>({...p,examSchedules:{...p.examSchedules,[sec]:(p.examSchedules[sec]||[]).map(r=>r.id===id?{...r,...patch}:r)}}));
+  const del=(id)=>commit(p=>({...p,examSchedules:{...p.examSchedules,[sec]:(p.examSchedules[sec]||[]).filter(r=>r.id!==id)}}));
+  const copyTo=(targets)=>{
+    const src=(state.examSchedules[sec]||[]);
+    commit(p=>{
+      const es={...p.examSchedules};
+      targets.forEach(t=>{ es[t]=src.map(r=>({...r,id:uid()})); });
+      return {...p,examSchedules:es};
+    });
+    setCopyOpen(false); toast(`نُسخ الجدول إلى ${targets.length} شعبة`);
+  };
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>جدول الاختبارات</h2><p>حدّد مواعيد اختبارات كل شعبة، وانسخ الجدول لشُعب أخرى بضغطة.</p></div>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn ghost" onClick={()=>setCopyOpen(true)} disabled={!rows.length}>نسخ لشُعب أخرى</button>
+          <button className="btn" onClick={add}>+ إضافة اختبار</button>
+        </div>
+      </div>
+
+      <div className="card pad" style={{marginBottom:16}}>
+        <div className="field" style={{margin:0,maxWidth:280}}>
+          <label>الشعبة</label>
+          <select className="input" value={sec} onChange={e=>setSec(+e.target.value)}>
+            {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,state.grades)}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {rows.length===0
+        ? <div className="card"><div className="empty"><div className="big">▤</div>لا توجد اختبارات مجدولة لهذه الشعبة.</div></div>
+        : <div className="card"><table className="tbl">
+            <thead><tr><th>اليوم</th><th>التاريخ</th><th>الوقت</th><th>المادة</th><th style={{width:1}}></th></tr></thead>
+            <tbody>{rows.map(r=><tr key={r.id}>
+              <td>{weekdayOf(r.date)}</td>
+              <td><input className="input" style={{padding:"6px 8px"}} type="date" value={r.date} onChange={e=>upd(r.id,{date:e.target.value})}/></td>
+              <td><input className="input" style={{padding:"6px 8px",width:110}} type="time" value={r.time} onChange={e=>upd(r.id,{time:e.target.value})}/></td>
+              <td><select className="input" style={{padding:"6px 8px"}} value={r.subject} onChange={e=>upd(r.id,{subject:e.target.value})}>
+                {SUBJECTS.map(s=><option key={s}>{s}</option>)}</select></td>
+              <td><button className="btn danger sm" onClick={()=>del(r.id)}>حذف</button></td>
+            </tr>)}</tbody>
+          </table></div>}
+
+      {copyOpen && <CopySchedule secs={secs} current={sec} grades={state.grades} onClose={()=>setCopyOpen(false)} onCopy={copyTo}/>}
+    </div>
+  );
+}
+function CopySchedule({secs,current,grades,onClose,onCopy}){
+  const [sel,setSel]=useState([]);
+  const toggle=n=>setSel(sel.includes(n)?sel.filter(x=>x!==n):[...sel,n]);
+  return (
+    <Modal title={`نسخ جدول شعبة ${current} إلى:`} onClose={onClose}
+      foot={<><button className="btn" disabled={!sel.length} onClick={()=>onCopy(sel)}>نسخ ({sel.length})</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
+      <p style={{marginTop:0,color:"var(--ink-soft)",fontSize:13.5}}>سيُستبدل جدول الشُّعب المختارة بنسخة من جدول شعبة {current}.</p>
+      <div style={{display:"flex",flexWrap:"wrap"}}>
+        {secs.filter(n=>n!==current).map(n=><span key={n} className={"chk"+(sel.includes(n)?" on":"")} onClick={()=>toggle(n)}>شعبة {n} · {gradeName(n,grades)}</span>)}
+      </div>
+    </Modal>
+  );
+}
+
+/* ========================= COMMITTEES ========================= */
+function Committees({state, commit}){
+  const toast=useToast();
+  const [form,setForm]=useState(false);
+  const [verify,setVerify]=useState(false);
+  const [confirm,setConfirm]=useState(null);
+  const {committees,students,grades}=state;
+
+  const assigned = useMemo(()=>{
+    const set=new Set(); committees.forEach(c=>c.studentIds.forEach(id=>set.add(id))); return set;
+  },[committees]);
+
+  const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"—";
+  const secOf=id=>(students.find(s=>s.id===id)||{}).section;
+
+  const create=(c)=>{
+    const number=(committees.reduce((m,x)=>Math.max(m,x.number),0))+1;
+    commit(p=>({...p,committees:[...p.committees,{...c,id:uid(),number,approved:true}]}));
+    toast(`تم اعتماد اللجنة رقم ${number}`); setForm(false);
+  };
+  const remove=c=>{ commit(p=>({...p,committees:p.committees.filter(x=>x.id!==c.id)})); toast("تم حذف اللجنة","err"); };
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>لجان الاختبارات</h2><p>وزّع الطلاب على لجان — كل لجنة تجمع شعبتين من صفّين مختلفين، بدون تكرار أي طالب.</p></div>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn ghost" onClick={()=>setVerify(true)} disabled={!committees.length}>تحقّق من اللجان</button>
+          <button className="btn" onClick={()=>setForm(true)}>+ تكوين لجنة</button>
+        </div>
+      </div>
+
+      <div className="banner info">
+        <span>◉</span>
+        <div>الطلاب الموزّعون: <b>{assigned.size}</b> من {students.length} · المتبقّون بدون لجنة: <b>{students.length-assigned.size}</b></div>
+      </div>
+
+      {committees.length===0
+        ? <div className="card"><div className="empty"><div className="big">⬚</div>لم تُكوَّن أي لجنة بعد.</div></div>
+        : <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))"}}>
+            {committees.slice().sort((a,b)=>a.number-b.number).map(c=>{
+              const cntA=c.studentIds.filter(id=>secOf(id)===c.sectionA).length;
+              const cntB=c.studentIds.filter(id=>secOf(id)===c.sectionB).length;
+              return <div className="card pad" key={c.id}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div>
+                    <div className="eyebrow">لجنة رقم {c.number}</div>
+                    <h3 style={{margin:"2px 0 0",fontSize:19}}>{c.subject||"اختبار"}</h3>
+                    <div style={{fontSize:12.5,color:"var(--ink-soft)",marginTop:2}}>
+                      {c.date?`${weekdayOf(c.date)} ${c.date} · `:""}{c.venue||"—"}
+                    </div>
+                  </div>
+                  <span className="tag brand">{c.studentIds.length} طالب</span>
+                </div>
+                <div style={{marginTop:12,fontSize:13,display:"flex",flexDirection:"column",gap:5}}>
+                  <div>شعبة {c.sectionA} <span style={{color:"var(--ink-faint)"}}>({gradeName(c.sectionA,grades)})</span> — {cntA} طالب</div>
+                  <div>شعبة {c.sectionB} <span style={{color:"var(--ink-faint)"}}>({gradeName(c.sectionB,grades)})</span> — {cntB} طالب</div>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:14}}>
+                  <button className="btn sm" onClick={()=>printCommittee(c,state)}>تصدير PDF</button>
+                  <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف اللجنة رقم ${c.number}؟ سيعود طلابها متاحين.`,onYes:()=>remove(c)})}>حذف</button>
+                </div>
+              </div>;
+            })}
+          </div>}
+
+      {form && <CommitteeForm state={state} assigned={assigned} onClose={()=>setForm(false)} onCreate={create}/>}
+      {verify && <VerifyModal state={state} onClose={()=>setVerify(false)}/>}
+      {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
+    </div>
+  );
+}
+
+function CommitteeForm({state, assigned, onClose, onCreate}){
+  const toast=useToast();
+  const {students,grades,meta}=state;
+  const secs=sectionsRange(meta.sectionsCount);
+  const [secA,setSecA]=useState(""); const [secB,setSecB]=useState("");
+  const [nA,setNA]=useState(15); const [nB,setNB]=useState(15);
+  const [subject,setSubject]=useState(""); const [date,setDate]=useState(""); const [venue,setVenue]=useState("");
+
+  const availBySec = sec => students.filter(s=>s.section===+sec && !assigned.has(s.id));
+  const gradeA = secA? gradeForSection(+secA,grades):null;
+  // الشعبة B: تُستثنى الشُّعب من نفس صف A
+  const bOptions = secs.filter(n=>{
+    if(!secA) return false;
+    if(n===+secA) return false;
+    const g=gradeForSection(n,grades);
+    return !(gradeA && g && g.id===gradeA.id); // نفس الصف مشطوب
+  });
+
+  const availA=secA?availBySec(secA):[];
+  const availB=secB?availBySec(secB):[];
+  const maxA=availA.length, maxB=availB.length;
+  const okCounts = nA>=0 && nB>=0 && nA<=maxA && nB<=maxB && (nA+nB)>0;
+
+  const half=()=>{ setNA(Math.min(15,maxA)); setNB(Math.min(15,maxB)); };
+
+  const submit=()=>{
+    if(!secA||!secB){ toast("اختر الشعبتين","err"); return; }
+    if(!okCounts){ toast("تحقق من أعداد الطلاب","err"); return; }
+    const ids=[...availA.slice(0,nA).map(s=>s.id), ...availB.slice(0,nB).map(s=>s.id)];
+    onCreate({sectionA:+secA, sectionB:+secB, studentIds:ids, subject:subject.trim(), date, venue:venue.trim()});
+  };
+
+  return (
+    <Modal title="تكوين لجنة جديدة" onClose={onClose} wide
+      foot={<>
+        <button className="btn accent" disabled={!okCounts||!secB} onClick={submit}>اعتماد اللجنة ({nA+nB} طالب)</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button>
+      </>}>
+      <div className="grid" style={{gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div className="field" style={{margin:0}}>
+          <label>الشعبة الأولى (الاختيار 1)</label>
+          <select className="input" value={secA} onChange={e=>{setSecA(e.target.value);setSecB("");}}>
+            <option value="">— اختر —</option>
+            {secs.map(n=><option key={n} value={n}>شعبة {n} · {gradeName(n,grades)} · متاح {availBySec(n).length}</option>)}
+          </select>
+        </div>
+        <div className="field" style={{margin:0}}>
+          <label>الشعبة الثانية (الاختيار 2) — من صف مختلف</label>
+          <select className="input" value={secB} onChange={e=>setSecB(e.target.value)} disabled={!secA}>
+            <option value="">— اختر —</option>
+            {bOptions.map(n=><option key={n} value={n}>شعبة {n} · {gradeName(n,grades)} · متاح {availBySec(n).length}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {secA && !bOptions.length &&
+        <div className="banner warn" style={{marginTop:14}}>⚠ لا توجد شُعب متاحة من صفوف أخرى. عرّف صفوفاً مختلفة من الإعدادات.</div>}
+
+      {secA && secB && <>
+        <div className="banner info" style={{marginTop:16,marginBottom:10}}>
+          <span>⇄</span><div>التقسيم بين الشعبتين — المتاح: شعبة {secA} = {maxA} طالب · شعبة {secB} = {maxB} طالب. <button className="btn ghost sm" style={{marginRight:8}} onClick={half}>نص بنص</button></div>
+        </div>
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div className="field" style={{margin:0}}>
+            <label>عدد من شعبة {secA}</label>
+            <input className="input" type="number" min="0" max={maxA} value={nA} onChange={e=>setNA(Math.max(0,+e.target.value||0))}/>
+            {nA>maxA && <div style={{color:"var(--danger)",fontSize:12,marginTop:4}}>أكبر من المتاح ({maxA})</div>}
+          </div>
+          <div className="field" style={{margin:0}}>
+            <label>عدد من شعبة {secB}</label>
+            <input className="input" type="number" min="0" max={maxB} value={nB} onChange={e=>setNB(Math.max(0,+e.target.value||0))}/>
+            {nB>maxB && <div style={{color:"var(--danger)",fontSize:12,marginTop:4}}>أكبر من المتاح ({maxB})</div>}
+          </div>
+        </div>
+        <div style={{textAlign:"center",margin:"6px 0 4px",fontFamily:"El Messiri",fontSize:18}}>حجم اللجنة: {nA+nB} طالب</div>
+      </>}
+
+      <div style={{borderTop:"1px solid var(--line)",margin:"18px 0 16px"}}/>
+      <div className="grid" style={{gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div className="field" style={{margin:0}}><label>المادة (اختياري)</label>
+          <select className="input" value={subject} onChange={e=>setSubject(e.target.value)}>
+            <option value="">— بدون —</option>{SUBJECTS.map(s=><option key={s}>{s}</option>)}
+          </select></div>
+        <div className="field" style={{margin:0}}><label>التاريخ (اختياري)</label>
+          <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)}/></div>
+      </div>
+      <div className="field" style={{margin:"14px 0 0"}}><label>مقر الاختبار</label>
+        <input className="input" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="مثال: قاعة 3 — الدور الأول"/></div>
+    </Modal>
+  );
+}
+
+function VerifyModal({state,onClose}){
+  const {committees,students,grades}=state;
+  const issues=[];
+  const seen={};
+  committees.forEach(c=>{
+    c.studentIds.forEach(id=>{
+      if(seen[id]!==undefined){
+        const nm=(students.find(s=>s.id===id)||{}).name||id;
+        issues.push(`الطالب «${nm}» موجود في لجنتين (${seen[id]} و ${c.number}).`);
+      } else seen[id]=c.number;
+    });
+    const gA=gradeForSection(c.sectionA,grades), gB=gradeForSection(c.sectionB,grades);
+    if(gA&&gB&&gA.id===gB.id) issues.push(`لجنة ${c.number}: الشعبتان من نفس الصف (${gA.name}).`);
+    const missing=c.studentIds.filter(id=>!students.find(s=>s.id===id));
+    if(missing.length) issues.push(`لجنة ${c.number}: ${missing.length} طالب محذوف من النظام.`);
+  });
+  return (
+    <Modal title="نتيجة التحقّق" onClose={onClose}
+      foot={<button className="btn" onClick={onClose}>تم</button>}>
+      {issues.length===0
+        ? <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:44,color:"var(--ok)"}}>✓</div>
+            <h3 style={{margin:"6px 0"}}>القواعد سليمة</h3>
+            <p style={{color:"var(--ink-soft)",margin:0}}>لا يوجد طالب مكرر، وكل اللجان تجمع صفوفاً مختلفة.</p>
+          </div>
+        : <div>
+            <div className="banner warn"><span>⚠</span><div>وُجدت {issues.length} مشكلة:</div></div>
+            <ul style={{margin:0,paddingRight:18,lineHeight:2}}>{issues.map((x,i)=><li key={i} style={{fontSize:14}}>{x}</li>)}</ul>
+          </div>}
+    </Modal>
+  );
+}
+
+/* ---------- PDF via print window ---------- */
+function printCommittee(c, state){
+  const {students,grades,meta}=state;
+  const rows=c.studentIds.map(id=>students.find(s=>s.id===id)).filter(Boolean)
+    .map((s,i)=>`<tr><td>${i+1}</td><td style="text-align:right">${s.name}</td><td>شعبة ${s.section}</td><td>${gradeName(s.section,grades)}</td></tr>`).join("");
+  const w=window.open("","_blank");
+  w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>لجنة ${c.number}</title>
+  <link href="https://fonts.googleapis.com/css2?family=El+Messiri:wght@500;700&family=IBM+Plex+Sans+Arabic:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body{font-family:"IBM Plex Sans Arabic",sans-serif;color:#221d18;padding:36px;margin:0}
+    .h{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1f5d4f;padding-bottom:14px;margin-bottom:6px}
+    h1{font-family:"El Messiri";margin:0;font-size:24px}
+    .meta{font-size:13px;color:#555;margin-top:4px}
+    .num{font-family:"El Messiri";font-size:40px;color:#1f5d4f;line-height:1}
+    table{width:100%;border-collapse:collapse;margin-top:22px;font-size:14px}
+    th{background:#1f5d4f;color:#fff;padding:10px;text-align:center}
+    td{padding:9px 10px;border-bottom:1px solid #e4dccc;text-align:center}
+    tr:nth-child(even) td{background:#f6f1e7}
+    .foot{margin-top:30px;display:flex;justify-content:space-between;font-size:13px;color:#555}
+    .sign{margin-top:50px;border-top:1px solid #999;width:200px;padding-top:6px;text-align:center}
+    @media print{.noprint{display:none}}
+  </style></head><body>
+  <div class="h">
+    <div><h1>${meta.schoolName}</h1><div class="meta">كشف لجنة اختبار${c.subject?` — ${c.subject}`:""}${c.date?` — ${weekdayOf(c.date)} ${c.date}`:""}</div>
+    <div class="meta">مقر الاختبار: ${c.venue||"—"} · عدد الطلاب: ${c.studentIds.length}</div></div>
+    <div style="text-align:center"><div style="font-size:12px;color:#555">رقم اللجنة</div><div class="num">${c.number}</div></div>
+  </div>
+  <table><thead><tr><th style="width:50px">م</th><th>اسم الطالب</th><th>الشعبة</th><th>الصف</th></tr></thead><tbody>${rows}</tbody></table>
+  <div class="foot"><div class="sign">توقيع المراقب</div><div class="sign">توقيع الوكيل</div></div>
+  <div style="text-align:center;margin-top:24px;font-size:11px;color:#999">${meta.schoolName} · من صنع مصطفى عبدالله أحمد</div>
+  <button class="noprint" onclick="window.print()" style="margin-top:24px;padding:10px 20px;background:#1f5d4f;color:#fff;border:0;border-radius:8px;font-size:15px;cursor:pointer;font-family:inherit">طباعة / حفظ PDF</button>
+  </body></html>`);
+  w.document.close();
+  setTimeout(()=>{ try{w.print();}catch(e){} }, 600);
+}
+
+/* ========================= SETTINGS ========================= */
+function Settings({state, commit}){
+  const toast=useToast();
+  const [count,setCount]=useState(state.meta.sectionsCount);
+  const [threshold,setThreshold]=useState(state.meta.absenceThreshold);
+  const [grades,setGrades]=useState(state.grades);
+
+  const saveMeta=()=>{ commit(p=>({...p,meta:{...p.meta,sectionsCount:+count,absenceThreshold:+threshold},grades})); toast("تم حفظ الإعدادات"); };
+  const updG=(id,patch)=>setGrades(grades.map(g=>g.id===id?{...g,...patch}:g));
+  const addG=()=>setGrades([...grades,{id:uid(),name:"صف جديد",from:1,to:count}]);
+  const delG=id=>setGrades(grades.filter(g=>g.id!==id));
+
+  return (
+    <div className="rise" style={{maxWidth:760}}>
+      <div className="section-head"><div><h2>الإعدادات</h2><p>هيكلة الشُّعب والصفوف وحدود التنبيهات.</p></div></div>
+
+      <div className="card pad" style={{marginBottom:18}}>
+        <h3 style={{marginTop:0}}>عام</h3>
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div className="field" style={{margin:0}}><label>عدد الشُّعب في المدرسة</label>
+            <input className="input" type="number" min="1" max="60" value={count} onChange={e=>setCount(e.target.value)}/></div>
+          <div className="field" style={{margin:0}}><label>حد التنبيه للغياب (عدد المرات)</label>
+            <input className="input" type="number" min="1" value={threshold} onChange={e=>setThreshold(e.target.value)}/></div>
+        </div>
+      </div>
+
+      <div className="card pad">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <h3 style={{margin:0}}>الصفوف ومجالات الشُّعب</h3>
+          <button className="btn ghost sm" onClick={addG}>+ صف</button>
+        </div>
+        <p style={{color:"var(--ink-soft)",fontSize:13,marginTop:0}}>حدّد لكل صف من أي شعبة إلى أي شعبة (مثال: أول ثانوي من 1 إلى 6).</p>
+        {grades.map(g=><div key={g.id} style={{display:"flex",gap:10,alignItems:"flex-end",marginBottom:10,flexWrap:"wrap"}}>
+          <div className="field" style={{margin:0,flex:1,minWidth:150}}><label>اسم الصف</label>
+            <input className="input" value={g.name} onChange={e=>updG(g.id,{name:e.target.value})}/></div>
+          <div className="field" style={{margin:0,width:90}}><label>من</label>
+            <input className="input" type="number" min="1" value={g.from} onChange={e=>updG(g.id,{from:+e.target.value})}/></div>
+          <div className="field" style={{margin:0,width:90}}><label>إلى</label>
+            <input className="input" type="number" min="1" value={g.to} onChange={e=>updG(g.id,{to:+e.target.value})}/></div>
+          <button className="btn danger sm" style={{marginBottom:15}} onClick={()=>delG(g.id)}>حذف</button>
+        </div>)}
+        <button className="btn" style={{marginTop:8}} onClick={saveMeta}>حفظ الإعدادات</button>
+      </div>
+    </div>
+  );
+}
+
+/* ========================= ACCOUNTS ========================= */
+function Accounts({state, commit, user}){
+  const toast=useToast();
+  const [modal,setModal]=useState(null);
+  const [confirm,setConfirm]=useState(null);
+  const save=(data)=>{
+    if(modal.mode==="add"){
+      if(state.users.some(u=>u.username===data.username)){ toast("اسم المستخدم موجود","err"); return; }
+      commit(p=>({...p,users:[...p.users,{id:uid(),...data}]})); toast("تم إنشاء الحساب");
+    } else {
+      commit(p=>({...p,users:p.users.map(u=>u.id===modal.u.id?{...u,...data}:u)})); toast("تم الحفظ");
+    }
+    setModal(null);
+  };
+  const remove=u=>{ commit(p=>({...p,users:p.users.filter(x=>x.id!==u.id)})); toast("تم حذف الحساب","err"); };
+  return (
+    <div className="rise" style={{maxWidth:820}}>
+      <div className="section-head">
+        <div><h2>الحسابات</h2><p>إدارة حسابات المدير والوكلاء والمعلمين.</p></div>
+        <button className="btn" onClick={()=>setModal({mode:"add"})}>+ حساب جديد</button>
+      </div>
+      <div className="card"><table className="tbl">
+        <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th style={{width:1}}></th></tr></thead>
+        <tbody>{state.users.map(u=><tr key={u.id}>
+          <td style={{fontWeight:600}}>{u.name}</td>
+          <td style={{color:"var(--ink-soft)"}}>{u.username}</td>
+          <td><span className={"tag "+(u.role==="manager"?"accent":"brand")}>{roleLabel(u.role)}</span></td>
+          <td><div style={{display:"flex",gap:6}}>
+            <button className="btn ghost sm" onClick={()=>setModal({mode:"edit",u})}>تعديل</button>
+            {u.id!==user.id && <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف حساب «${u.name}»؟`,onYes:()=>remove(u)})}>حذف</button>}
+          </div></td>
+        </tr>)}</tbody>
+      </table></div>
+      {modal && <AccountForm mode={modal.mode} u={modal.u} onClose={()=>setModal(null)} onSave={save}/>}
+      {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
+    </div>
+  );
+}
+function AccountForm({mode,u,onClose,onSave}){
+  const [name,setName]=useState(u?.name||"");
+  const [username,setUsername]=useState(u?.username||"");
+  const [password,setPassword]=useState(u?.password||"");
+  const [role,setRole]=useState(u?.role||"deputy");
+  const valid=name.trim()&&username.trim()&&password;
+  return (
+    <Modal title={mode==="add"?"حساب جديد":"تعديل الحساب"} onClose={onClose}
+      foot={<><button className="btn" disabled={!valid} onClick={()=>onSave({name:name.trim(),username:username.trim(),password,role})}>حفظ</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
+      <div className="field"><label>الاسم</label><input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus/></div>
+      <div className="field"><label>اسم المستخدم</label><input className="input" value={username} onChange={e=>setUsername(e.target.value)}/></div>
+      <div className="field"><label>كلمة المرور</label><input className="input" value={password} onChange={e=>setPassword(e.target.value)}/></div>
+      <div className="field" style={{margin:0}}><label>الصلاحية</label>
+        <select className="input" value={role} onChange={e=>setRole(e.target.value)}>
+          <option value="manager">مدير — كامل الصلاحيات</option>
+          <option value="deputy">وكيل</option>
+          <option value="teacher">معلم</option>
+        </select></div>
+    </Modal>
+  );
+}
+
+/* ========================= APP ========================= */
+function App(){
+  const [state,commit]=useStore();
+  const [user,setUser]=useState(null);
+  if(!state) return <div style={{display:"grid",placeItems:"center",height:"100vh",color:"var(--ink-soft)"}}>...جاري التحميل</div>;
+  return (
+    <ToastHost>
+      {user
+        ? <Shell state={state} commit={commit} user={user} onLogout={()=>setUser(null)}/>
+        : <Login state={state} onLogin={setUser}/>}
+    </ToastHost>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
