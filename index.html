@@ -14,6 +14,7 @@
 <!-- Firebase (compat SDK — works without a build step) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 
 <!-- React + Babel (single-file app, no bundler) -->
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -305,10 +306,30 @@ const { useState, useEffect, useMemo, useRef, useCallback } = React;
 const LS_KEY = "maraz_school_state_v1";
 const FB = window.FIREBASE_CONFIG;
 const FIREBASE_READY = FB && FB.apiKey && !FB.apiKey.startsWith("PUT_");
-let fdb = null;
+const AUTH_DOMAIN_SUFFIX = "@maraz-aliman.app"; // اسم المستخدم يُحوَّل لبريد داخلي
+let fdb = null, fauth = null, secApp = null;
 if (FIREBASE_READY) {
-  try { firebase.initializeApp(FB); fdb = firebase.firestore(); }
+  try {
+    firebase.initializeApp(FB);
+    fdb = firebase.firestore();
+    fauth = firebase.auth();
+    fauth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+  }
   catch(e){ console.warn("Firebase init failed, falling back to local", e); }
+}
+const userToEmail = u => (u.includes("@") ? u : u.trim().toLowerCase()+AUTH_DOMAIN_SUFFIX);
+const USERS_COL = "maraz_users";
+
+// إنشاء حساب عبر تطبيق ثانوي حتى لا يخرج المدير من جلسته
+async function createAuthAccount({username,name,role,password}){
+  if(!secApp) secApp = firebase.initializeApp(FB, "secondary");
+  const secAuth = secApp.auth();
+  try{ await secAuth.setPersistence(firebase.auth.Auth.Persistence.NONE); }catch(_){}
+  const cred = await secAuth.createUserWithEmailAndPassword(userToEmail(username), password);
+  const uid = cred.user.uid;
+  await fdb.collection(USERS_COL).doc(uid).set({username:username.trim().toLowerCase(), name:name.trim(), role});
+  await secAuth.signOut();
+  return uid;
 }
 
 const uid = () => Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-3);
@@ -348,29 +369,34 @@ function loadLocal(){
 function saveLocal(state){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){} }
 
 /* ========================= App root ========================= */
-function useStore(){
+function useStore(dataReady){
   const [state,setState] = useState(null);
-  const stateRef = useRef(null);
-  stateRef.current = state;
 
   useEffect(()=>{
     if (fdb){
+      if(!dataReady){ setState(null); return; } // انتظر تسجيل الدخول قبل قراءة البيانات
+      // في الوضع السحابي: بيانات المدرسة فقط، بدون مستخدمين/كلمات مرور (تُدار عبر Firebase Auth)
+      const cloudInit = (()=>{ const {users, ...rest}=DEFAULT_STATE; return rest; })();
       const ref = fdb.collection("maraz").doc("state");
       const unsub = ref.onSnapshot(snap=>{
-        if (snap.exists){ setState(snap.data()); }
-        else { const init = loadLocal() || DEFAULT_STATE; ref.set(init); setState(init); }
-      }, err=>{ console.warn(err); setState(loadLocal()||DEFAULT_STATE); });
+        if (snap.exists){ const d=snap.data(); if(d.users) delete d.users; setState(d); }
+        else { ref.set(cloudInit); setState(cloudInit); }
+      }, err=>{ console.warn(err); });
       return unsub;
     } else {
       setState(loadLocal() || DEFAULT_STATE);
     }
-  },[]);
+  },[dataReady]);
 
   const commit = useCallback((updater)=>{
     setState(prev=>{
-      const next = typeof updater==="function" ? updater(prev) : updater;
-      saveLocal(next);
-      if (fdb){ fdb.collection("maraz").doc("state").set(next).catch(e=>console.warn(e)); }
+      let next = typeof updater==="function" ? updater(prev) : updater;
+      if (fdb){
+        if (next.users){ const {users, ...rest}=next; next=rest; } // لا تُخزَّن الحسابات في مستند البيانات
+        fdb.collection("maraz").doc("state").set(next).catch(e=>console.warn(e));
+      } else {
+        saveLocal(next);
+      }
       return next;
     });
   },[]);
@@ -445,12 +471,26 @@ function Confirm({text, onYes, onClose, danger}){
 }
 
 /* ========================= LOGIN ========================= */
-function Login({state, onLogin}){
-  const [u,setU]=useState(""); const [p,setP]=useState(""); const [err,setErr]=useState("");
-  const submit=e=>{
-    e.preventDefault();
-    const found = state.users.find(x=>x.username===u.trim() && x.password===p);
-    if(found){ onLogin(found); } else { setErr("اسم المستخدم أو كلمة المرور غير صحيحة"); }
+function mapAuthErr(ex){
+  const c=(ex&&ex.code)||"";
+  if(c.includes("wrong-password")||c.includes("invalid-credential")||c.includes("user-not-found")||c.includes("invalid-login")) return "اسم المستخدم أو كلمة المرور غير صحيحة";
+  if(c.includes("too-many-requests")) return "محاولات كثيرة، انتظر قليلاً ثم أعد المحاولة";
+  if(c.includes("network")) return "تعذّر الاتصال بالشبكة، تحقّق من الإنترنت";
+  return "تعذّر تسجيل الدخول — تأكد من تفعيل المصادقة في Firebase";
+}
+function Login({localUsers, onLocalLogin, authErr, setAuthErr}){
+  const [u,setU]=useState(""); const [p,setP]=useState(""); const [err,setErr]=useState(""); const [busy,setBusy]=useState(false);
+  const submit=async e=>{
+    e.preventDefault(); setErr(""); if(setAuthErr) setAuthErr("");
+    if(fauth){
+      setBusy(true);
+      try{ await fauth.signInWithEmailAndPassword(userToEmail(u), p); }
+      catch(ex){ setErr(mapAuthErr(ex)); }
+      finally{ setBusy(false); }
+    } else {
+      const found=(localUsers||[]).find(x=>x.username===u.trim() && x.password===p);
+      if(found){ onLocalLogin(found); } else { setErr("اسم المستخدم أو كلمة المرور غير صحيحة"); }
+    }
   };
   return (
     <div className="login-wrap">
@@ -479,12 +519,12 @@ function Login({state, onLogin}){
             <input id="login-pass" name="password" autoComplete="current-password" className="input" type="password" value={p} onChange={e=>setP(e.target.value)} placeholder="••••"/>
           </div>
           <div aria-live="polite">
-            {err && <div style={{color:"var(--danger)",fontSize:13,marginBottom:12}}>{err}</div>}
+            {(err||authErr) && <div style={{color:"var(--danger)",fontSize:13,marginBottom:12}}>{err||authErr}</div>}
           </div>
-          <button className="btn" style={{width:"100%"}} type="submit">دخول</button>
-          <p style={{fontSize:12,color:"var(--ink-faint)",marginTop:16,textAlign:"center"}}>
-            تجريبي: admin / 1234 &nbsp;·&nbsp; wakeel / 1234
-          </p>
+          <button className="btn" style={{width:"100%"}} type="submit" disabled={busy}>{busy?"جارٍ الدخول…":"دخول"}</button>
+          {!FIREBASE_READY && <p style={{fontSize:12,color:"var(--ink-faint)",marginTop:16,textAlign:"center"}}>
+            وضع محلي — تجريبي: admin / 1234 &nbsp;·&nbsp; wakeel / 1234
+          </p>}
           <p style={{fontSize:12,color:"var(--ink-faint)",marginTop:4,textAlign:"center"}}>
             من صنع مصطفى عبدالله أحمد
           </p>
@@ -1488,7 +1528,108 @@ function Settings({state, commit}){
 }
 
 /* ========================= ACCOUNTS ========================= */
-function Accounts({state, commit, user}){
+function Accounts(props){
+  return FIREBASE_READY ? <AccountsCloud me={props.user}/> : <AccountsLocal {...props}/>;
+}
+
+function AccountsCloud({me}){
+  const toast=useToast();
+  const [users,setUsers]=useState(null);
+  const [modal,setModal]=useState(null);
+  const [confirm,setConfirm]=useState(null);
+  const [busy,setBusy]=useState(false);
+
+  useEffect(()=>{
+    const unsub=fdb.collection(USERS_COL).onSnapshot(
+      snap=>setUsers(snap.docs.map(d=>({id:d.id,...d.data()}))),
+      e=>{ console.warn(e); setUsers([]); toast("تعذّر تحميل الحسابات","err"); }
+    );
+    return unsub;
+  },[]);
+
+  const create=async(data)=>{
+    setBusy(true);
+    try{
+      await createAuthAccount(data);
+      toast("تم إنشاء الحساب بأمان"); setModal(null);
+    }catch(ex){
+      const c=(ex&&ex.code)||"";
+      toast(c.includes("email-already-in-use")?"اسم المستخدم مستخدم مسبقاً":
+            c.includes("weak-password")?"كلمة المرور ضعيفة (6 خانات على الأقل)":
+            c.includes("operation-not-allowed")?"فعّل «Email/Password» في Firebase Auth":
+            "تعذّر الإنشاء: "+(ex.message||c),"err");
+    }finally{ setBusy(false); }
+  };
+  const saveEdit=async(id,data)=>{
+    try{ await fdb.collection(USERS_COL).doc(id).update({name:data.name.trim(),role:data.role}); toast("تم الحفظ"); setModal(null); }
+    catch(e){ toast("تعذّر الحفظ","err"); }
+  };
+  const remove=async(u)=>{
+    try{ await fdb.collection(USERS_COL).doc(u.id).delete(); toast("تم تعطيل الحساب","err"); }
+    catch(e){ toast("تعذّر الحذف","err"); }
+  };
+
+  return (
+    <div className="rise" style={{maxWidth:820}}>
+      <div className="section-head">
+        <div><h2>الحسابات</h2><p>حسابات آمنة عبر Firebase Authentication — كلمات المرور مشفّرة ولا تُخزَّن في قاعدة البيانات.</p></div>
+        <button className="btn" onClick={()=>setModal({mode:"add"})}>+ حساب جديد</button>
+      </div>
+
+      <div className="banner info"><span>🔒</span><div>الدخول محميّ بالمصادقة الفعلية. حذف الحساب هنا يمنع دخوله فوراً. لإزالته نهائياً احذفه أيضاً من Firebase Console → Authentication.</div></div>
+
+      {users===null
+        ? <div className="card"><div className="empty">جاري تحميل الحسابات…</div></div>
+        : <div className="card"><table className="tbl">
+            <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th style={{width:1}}></th></tr></thead>
+            <tbody>{users.map(u=><tr key={u.id}>
+              <td style={{fontWeight:600}}>{u.name}</td>
+              <td style={{color:"var(--ink-soft)"}}>{u.username}</td>
+              <td><span className={"tag "+(u.role==="manager"?"accent":"brand")}>{roleLabel(u.role)}</span></td>
+              <td><div style={{display:"flex",gap:6}}>
+                <button className="btn ghost sm" onClick={()=>setModal({mode:"edit",u})}>تعديل</button>
+                {u.id!==me.id && <button className="btn danger sm" onClick={()=>setConfirm({text:`تعطيل حساب «${u.name}»؟ لن يستطيع الدخول بعدها.`,onYes:()=>remove(u)})}>تعطيل</button>}
+              </div></td>
+            </tr>)}</tbody>
+          </table></div>}
+
+      {modal && <CloudAccountForm mode={modal.mode} u={modal.u} busy={busy}
+        onClose={()=>setModal(null)}
+        onSave={data=> modal.mode==="add" ? create(data) : saveEdit(modal.u.id,data)}/>}
+      {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
+    </div>
+  );
+}
+function CloudAccountForm({mode,u,busy,onClose,onSave}){
+  const [name,setName]=useState(u?.name||"");
+  const [username,setUsername]=useState(u?.username||"");
+  const [password,setPassword]=useState("");
+  const [role,setRole]=useState(u?.role||"deputy");
+  const isAdd=mode==="add";
+  const valid=name.trim() && (!isAdd || (username.trim() && password.length>=6));
+  return (
+    <Modal title={isAdd?"حساب جديد":"تعديل الحساب"} onClose={onClose}
+      foot={<><button className="btn" disabled={!valid||busy} onClick={()=>onSave({name,username,password,role})}>{busy?"جارٍ…":"حفظ"}</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
+      <Field label="الاسم"><input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus/></Field>
+      {isAdd
+        ? <>
+            <Field label="اسم المستخدم" hint="يُستخدم للدخول (حروف إنجليزية/أرقام بدون مسافات)">
+              <input className="input" value={username} onChange={e=>setUsername(e.target.value)} placeholder="wakeel2"/></Field>
+            <Field label="كلمة المرور" hint="6 خانات على الأقل">
+              <input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)}/></Field>
+          </>
+        : <Field label="اسم المستخدم"><input className="input" value={username} disabled/></Field>}
+      <Field label="الصلاحية" style={{margin:0}}>
+        <select className="input" value={role} onChange={e=>setRole(e.target.value)}>
+          <option value="manager">مدير — كامل الصلاحيات</option>
+          <option value="deputy">وكيل</option>
+          <option value="teacher">معلم</option>
+        </select></Field>
+    </Modal>
+  );
+}
+function AccountsLocal({state, commit, user}){
   const toast=useToast();
   const [modal,setModal]=useState(null);
   const [confirm,setConfirm]=useState(null);
@@ -1550,16 +1691,35 @@ function AccountForm({mode,u,onClose,onSave}){
 
 /* ========================= APP ========================= */
 function App(){
-  const [state,commit]=useStore();
   const [user,setUser]=useState(null);
-  if(!state) return <div style={{display:"grid",placeItems:"center",height:"100vh",color:"var(--ink-soft)"}}>جاري التحميل…</div>;
-  return (
-    <ToastHost>
-      {user
-        ? <Shell state={state} commit={commit} user={user} onLogout={()=>setUser(null)}/>
-        : <Login state={state} onLogin={setUser}/>}
-    </ToastHost>
-  );
+  const [authReady,setAuthReady]=useState(!FIREBASE_READY);
+  const [authErr,setAuthErr]=useState("");
+  const [state,commit]=useStore(!!user);
+
+  useEffect(()=>{
+    if(!fauth) return;
+    const unsub=fauth.onAuthStateChanged(async fbUser=>{
+      if(!fbUser){ setUser(null); setAuthReady(true); return; }
+      try{
+        const doc=await fdb.collection(USERS_COL).doc(fbUser.uid).get();
+        if(doc.exists){ setUser({id:fbUser.uid, ...doc.data()}); }
+        else { setAuthErr("تم الدخول لكن لا يوجد ملف صلاحيات لحسابك. راجع المدير."); await fauth.signOut(); setUser(null); }
+      }catch(e){ setAuthErr("تعذّر تحميل الصلاحيات. تأكد من قواعد الأمان في Firestore."); try{await fauth.signOut();}catch(_){} setUser(null); }
+      setAuthReady(true);
+    });
+    return unsub;
+  },[]);
+
+  const logout=()=>{ if(fauth){ fauth.signOut(); } setUser(null); };
+  const loading = <div style={{display:"grid",placeItems:"center",height:"100vh",color:"var(--ink-soft)"}}>جاري التحميل…</div>;
+
+  if(!authReady) return loading;
+  if(!user){
+    if(!FIREBASE_READY && !state) return loading;
+    return <ToastHost><Login localUsers={FIREBASE_READY?null:state.users} onLocalLogin={setUser} authErr={authErr} setAuthErr={setAuthErr}/></ToastHost>;
+  }
+  if(!state) return loading;
+  return <ToastHost><Shell state={state} commit={commit} user={user} onLogout={logout}/></ToastHost>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>

@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function profile() {
+      return get(/databases/$(database)/documents/maraz_users/$(request.auth.uid)).data;
+    }
+    function hasProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/maraz_users/$(request.auth.uid));
+    }
+    function isManager() {
+      return hasProfile() && profile().role == 'manager';
+    }
+    function isStaff() {
+      return hasProfile() && (profile().role == 'manager' || profile().role == 'deputy' || profile().role == 'teacher');
+    }
+
+    // ملفات الصلاحيات: يقرؤها أي مسجّل دخول، ويعدّلها المدير فقط
+    match /maraz_users/{uid} {
+      allow read:  if signedIn();
+      allow write: if isManager();
+    }
+
+    // بيانات المدرسة (طلاب، حضور، لجان...): للكادر المصرّح فقط
+    match /maraz/{doc} {
+      allow read:  if isStaff();
+      allow write: if isStaff();
+    }
+
+    // امنع أي شيء آخر
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
