@@ -1097,7 +1097,7 @@ function StudentForm({mode,student,secs,grades,onClose,onSave}){
         <button className="btn ghost" onClick={onClose}>إلغاء</button>
       </>}>
       <Field label="اسم الطالب">
-        <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="الاسم الكامل"/></Field>
+        <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="الاسم الكامل"/></Field>
       <Field label={"الشعبة"+(mode==="edit"?" (تغيير الشعبة = نقل الطالب)":"")}>
         <select className="input" value={section} onChange={e=>setSection(+e.target.value)}>
           {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,grades)}</option>)}
@@ -1166,7 +1166,7 @@ function TeacherForm({mode,teacher,secs,grades,onClose,onSave}){
         <button className="btn ghost" onClick={onClose}>إلغاء</button>
       </>}>
       <Field label="الاسم الثلاثي">
-        <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="مثال: بدر محمد العتيبي"/></Field>
+        <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="مثال: بدر محمد العتيبي"/></Field>
       <div className="field"><label>المواد التي يدرّسها (اختر واحدة أو أكثر)</label>
         <div style={{display:"flex",flexWrap:"wrap"}} role="group" aria-label="المواد">
           {SUBJECTS.map(s=><button type="button" key={s} aria-pressed={subjects.includes(s)} className={"chk"+(subjects.includes(s)?" on":"")} onClick={()=>toggle(subjects,setSubjects,s)}>{s}</button>)}
@@ -1685,7 +1685,7 @@ function CloudAccountForm({mode,u,busy,onClose,onSave}){
     <Modal title={isAdd?"حساب جديد":"تعديل الحساب"} onClose={onClose}
       foot={<><button className="btn" disabled={!valid||busy} onClick={()=>onSave({name,username,password,role})}>{busy?"جارٍ…":"حفظ"}</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
-      <Field label="الاسم"><input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus/></Field>
+      <Field label="الاسم"><input className="input" value={name} onChange={e=>setName(e.target.value)}/></Field>
       {isAdd
         ? <>
             <Field label="اسم المستخدم" hint="يُستخدم للدخول (حروف إنجليزية/أرقام بدون مسافات)">
@@ -1750,7 +1750,7 @@ function AccountForm({mode,u,onClose,onSave}){
     <Modal title={mode==="add"?"حساب جديد":"تعديل الحساب"} onClose={onClose}
       foot={<><button className="btn" disabled={!valid} onClick={()=>onSave({name:name.trim(),username:username.trim(),password,role})}>حفظ</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
-      <Field label="الاسم"><input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus/></Field>
+      <Field label="الاسم"><input className="input" value={name} onChange={e=>setName(e.target.value)}/></Field>
       <Field label="اسم المستخدم"><input className="input" name="username" autoComplete="off" value={username} onChange={e=>setUsername(e.target.value)}/></Field>
       <Field label="كلمة المرور"><input className="input" value={password} onChange={e=>setPassword(e.target.value)}/></Field>
       <Field label="الصلاحية" style={{margin:0}}>
