@@ -151,6 +151,8 @@
 
   .field{display:block;margin-bottom:15px}
   .field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--ink-soft)}
+  .field .hint{font-size:12px;color:var(--ink-faint);margin-top:5px}
+  .cv tbody tr{content-visibility:auto;contain-intrinsic-size:auto 49px}
   .input,select.input,textarea.input{
     width:100%;padding:11px 14px;border:1px solid var(--line-strong);border-radius:var(--r-sm);
     background:var(--paper-2);color:var(--ink);font-size:15px;transition:border .15s,box-shadow .15s;
@@ -397,6 +399,20 @@ function ToastHost({children}){
 }
 const useToast = ()=>React.useContext(ToastCtx);
 
+/* ========================= Field (label ↔ control) ========================= */
+let _fieldSeq = 0;
+function Field({label, hint, children, style}){
+  const id = useMemo(()=>"fld_"+(++_fieldSeq),[]);
+  const control = React.cloneElement(children, {id, "aria-describedby": hint?id+"_h":undefined});
+  return (
+    <div className="field" style={style}>
+      <label htmlFor={id}>{label}</label>
+      {control}
+      {hint && <div className="hint" id={id+"_h"}>{hint}</div>}
+    </div>
+  );
+}
+
 /* ========================= Modal ========================= */
 function Modal({title, onClose, children, foot, wide}){
   useEffect(()=>{
@@ -482,6 +498,7 @@ const NAV = [
   {id:"dashboard", label:"لوحة المعلومات", ic:"◧", roles:["manager","deputy","teacher"]},
   {id:"attendance", label:"الحضور والغياب", ic:"✓", roles:["manager","deputy","teacher"]},
   {id:"stats", label:"التقارير والإحصائيات", ic:"◔", roles:["manager","deputy"]},
+  {id:"monitor", label:"مراقبة الغياب", ic:"◎", roles:["manager","deputy"]},
   {sep:"الإدارة"},
   {id:"students", label:"الطلاب", ic:"◉", roles:["manager","deputy"]},
   {id:"teachers", label:"المعلمون", ic:"✎", roles:["manager","deputy"]},
@@ -495,17 +512,26 @@ const NAV = [
 
 /* ========================= SHELL ========================= */
 function Shell({state, commit, user, onLogout}){
-  const [page,setPage]=useState("dashboard");
+  const allowed = id => { const n=NAV.find(x=>x.id===id); return n && n.roles.includes(user.role); };
+  const initial = (()=>{ const h=(location.hash||"").replace("#",""); return allowed(h)?h:"dashboard"; })();
+  const [page,setPage]=useState(initial);
   const [navOpen,setNavOpen]=useState(false);
   const items = NAV.filter(n=>n.sep || n.roles.includes(user.role));
   const active = NAV.find(n=>n.id===page) || {label:"لوحة المعلومات"};
 
-  const go = id => { setPage(id); setNavOpen(false); };
+  const go = id => { setPage(id); setNavOpen(false); if(location.hash!=="#"+id) location.hash=id; };
+
+  useEffect(()=>{
+    const onHash=()=>{ const h=(location.hash||"").replace("#",""); if(allowed(h)) setPage(h); };
+    window.addEventListener("hashchange",onHash); return ()=>window.removeEventListener("hashchange",onHash);
+  },[user.role]);
+  useEffect(()=>{ if(location.hash!=="#"+page) location.hash=page; },[]); // seed hash on mount
 
   const Page = {
     dashboard:<Dashboard state={state} user={user} go={go}/>,
     attendance:<Attendance state={state} commit={commit} user={user}/>,
     stats:<Stats state={state}/>,
+    monitor:<Monitor state={state}/>,
     students:<Students state={state} commit={commit}/>,
     teachers:<Teachers state={state} commit={commit}/>,
     schedule:<Schedule state={state} commit={commit}/>,
@@ -643,16 +669,14 @@ function Attendance({state, commit, user}){
 
       <div className="card pad" style={{marginBottom:18}}>
         <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-end"}}>
-          <div className="field" style={{margin:0,minWidth:170}}>
-            <label>التاريخ</label>
+          <Field label="التاريخ" style={{margin:0,minWidth:170}}>
             <input className="input" type="date" value={date} max={todayISO()} onChange={e=>setDate(e.target.value)}/>
-          </div>
-          <div className="field" style={{margin:0,minWidth:170}}>
-            <label>الشعبة</label>
+          </Field>
+          <Field label="الشعبة" style={{margin:0,minWidth:170}}>
             <select className="input" value={sec} onChange={e=>setSec(+e.target.value)}>
               {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,state.grades)}</option>)}
             </select>
-          </div>
+          </Field>
           <div style={{marginRight:"auto",display:"flex",gap:8}}>
             <button className="btn ghost sm" onClick={()=>markAll("present")} disabled={!roster.length}>تحضير الكل</button>
             <button className="btn ghost sm" onClick={()=>markAll("absent")} disabled={!roster.length}>تغييب الكل</button>
@@ -794,13 +818,135 @@ function Bar({label,val,max,hot}){
   </div>;
 }
 
+/* ========================= MONITOR (مراقبة الغياب) ========================= */
+function Monitor({state}){
+  const {students,attendance,grades,meta}=state;
+  const secs=sectionsRange(meta.sectionsCount);
+  const dates=Object.keys(attendance).sort();
+  const [from,setFrom]=useState(dates[0]||"");
+  const [to,setTo]=useState(dates[dates.length-1]||"");
+  const [sortBy,setSortBy]=useState("absent"); // absent | rate
+  const [openSec,setOpenSec]=useState(null);
+
+  const per=useMemo(()=>{
+    const inRange=d=>(!from||d>=from)&&(!to||d<=to);
+    const sa={}; students.forEach(s=>sa[s.id]={absent:0,late:0,excused:0});
+    let daysCount=0;
+    Object.entries(attendance).forEach(([d,day])=>{
+      if(!inRange(d)) return; daysCount++;
+      Object.entries(day).forEach(([sid,st])=>{ if(sa[sid]&&sa[sid][st]!==undefined) sa[sid][st]++; });
+    });
+    const sections=secs.map(sec=>{
+      const roster=students.filter(s=>s.section===sec);
+      let absent=0,late=0,excused=0;
+      roster.forEach(s=>{absent+=sa[s.id].absent;late+=sa[s.id].late;excused+=sa[s.id].excused;});
+      const ranked=roster.map(s=>({id:s.id,name:s.name,...sa[s.id]})).sort((a,b)=>b.absent-a.absent||b.late-a.late);
+      const possible=roster.length*daysCount;
+      const rate=possible?Math.round(absent/possible*100):0;
+      return {sec,grade:gradeName(sec,grades),count:roster.length,absent,late,excused,rate,ranked};
+    }).filter(x=>x.count>0);
+    return {sections,daysCount};
+  },[attendance,students,grades,from,to,secs.length]);
+
+  const sorted=per.sections.slice().sort((a,b)=> sortBy==="rate"? b.rate-a.rate : b.absent-a.absent);
+  const totAbsent=per.sections.reduce((m,s)=>m+s.absent,0);
+  const worst=per.sections.slice().sort((a,b)=>b.absent-a.absent)[0];
+
+  if(!dates.length) return <div className="card rise"><div className="empty"><div className="big">◎</div>لا توجد بيانات حضور بعد.<br/><span style={{fontSize:13}}>سجّل الحضور أولاً لتظهر المراقبة.</span></div></div>;
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>مراقبة الغياب</h2><p>نِسب الغياب وأكثر الطلاب غياباً في كل فصل، خلال الفترة المحددة.</p></div>
+      </div>
+
+      <div className="card pad" style={{marginBottom:18,display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end"}}>
+        <Field label="من تاريخ" style={{margin:0,minWidth:160}}>
+          <input className="input" type="date" value={from} min={dates[0]} max={to||dates[dates.length-1]} onChange={e=>setFrom(e.target.value)}/>
+        </Field>
+        <Field label="إلى تاريخ" style={{margin:0,minWidth:160}}>
+          <input className="input" type="date" value={to} min={from||dates[0]} max={dates[dates.length-1]} onChange={e=>setTo(e.target.value)}/>
+        </Field>
+        <Field label="الترتيب حسب" style={{margin:0,minWidth:170}}>
+          <select className="input" value={sortBy} onChange={e=>setSortBy(e.target.value)}>
+            <option value="absent">عدد الغياب</option>
+            <option value="rate">نسبة الغياب %</option>
+          </select>
+        </Field>
+        <div style={{marginRight:"auto"}}>
+          <button className="btn ghost sm" onClick={()=>{setFrom(dates[0]);setTo(dates[dates.length-1]);}}>كل الفترة</button>
+        </div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",marginBottom:18}}>
+        <Stat k="أيام مسجّلة بالفترة" v={per.daysCount} glyph="▤" foot="يوم دراسي"/>
+        <Stat k="إجمالي الغياب" v={totAbsent} glyph="✕" foot="خلال الفترة"/>
+        <Stat k="فصول تحت المراقبة" v={per.sections.length} glyph="◎" foot="فيها طلاب"/>
+        <Stat k="أعلى فصل غياباً" v={worst?`شعبة ${worst.sec}`:"—"} glyph="!" foot={worst?`${worst.absent} غياب`:""}/>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))"}}>
+        {sorted.map(s=>{
+          const maxAbs=Math.max(1,...per.sections.map(x=>x.absent));
+          const top=s.ranked.filter(r=>r.absent>0).slice(0,3);
+          const isOpen=openSec===s.sec;
+          return <div className="card pad" key={s.sec}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <div className="eyebrow">{s.grade}</div>
+                <h3 style={{margin:"2px 0 0",fontSize:19}}>شعبة {s.sec}</h3>
+                <div style={{fontSize:12.5,color:"var(--ink-soft)",marginTop:2}}>{s.count} طالب</div>
+              </div>
+              <div style={{textAlign:"left"}}>
+                <div style={{fontFamily:"El Messiri",fontSize:26,fontWeight:700,color:s.rate>=20?"var(--danger)":"var(--brand)",lineHeight:1}}>{s.rate}%</div>
+                <div style={{fontSize:11,color:"var(--ink-faint)"}}>نسبة الغياب</div>
+              </div>
+            </div>
+
+            <div className="bar-row" style={{marginTop:14,marginBottom:6}}>
+              <span className="lbl">الغياب</span>
+              <div className="bar-track"><div className={"bar-fill"+(s===worst?" hot":"")} style={{width:(s.absent/maxAbs*100)+"%"}}/></div>
+              <span className="num">{s.absent}</span>
+            </div>
+            <div style={{display:"flex",gap:8,fontSize:12.5,color:"var(--ink-soft)",marginBottom:10}}>
+              <span className="pill late">تأخير {s.late}</span>
+              <span className="pill excused">بعذر {s.excused}</span>
+            </div>
+
+            <div style={{fontSize:12.5,fontWeight:600,color:"var(--ink-soft)",marginBottom:6}}>الأكثر غياباً</div>
+            {top.length? (isOpen?s.ranked.filter(r=>r.absent>0||r.late>0):top).map((r,i)=>(
+              <div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid var(--line)"}}>
+                <span style={{fontSize:13.5}}><span style={{color:"var(--ink-faint)",marginLeft:6}}>{i+1}.</span>{r.name}</span>
+                <span className={"pill "+(r.absent>=meta.absenceThreshold?"absent":"late")}>{r.absent} غياب</span>
+              </div>
+            )) : <div style={{fontSize:13,color:"var(--ink-faint)"}}>لا غياب مسجّل 👏</div>}
+
+            {s.ranked.filter(r=>r.absent>0).length>3 &&
+              <button className="btn ghost sm" style={{marginTop:10}} onClick={()=>setOpenSec(isOpen?null:s.sec)}>
+                {isOpen?"عرض أقل":`عرض الكل (${s.ranked.filter(r=>r.absent>0).length})`}
+              </button>}
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ========================= STUDENTS ========================= */
 function Students({state, commit}){
   const toast=useToast();
   const [q,setQ]=useState(""); const [fSec,setFSec]=useState("all");
   const [modal,setModal]=useState(null); // {mode:'add'|'edit'|'move', student}
+  const [bulk,setBulk]=useState(false);
   const [confirm,setConfirm]=useState(null);
   const secs=sectionsRange(state.meta.sectionsCount);
+
+  const addBulk=(names,section)=>{
+    const rows=names.map(n=>({id:uid(),name:n.trim(),section})).filter(r=>r.name.length>=2);
+    if(!rows.length){ toast("لا توجد أسماء صالحة","err"); return; }
+    commit(p=>({...p,students:[...p.students,...rows]}));
+    toast(`أُضيف ${rows.length} طالب لشعبة ${section}`); setBulk(false);
+  };
 
   const list = state.students
     .filter(s=>fSec==="all"||s.section===+fSec)
@@ -830,27 +976,28 @@ function Students({state, commit}){
     <div className="rise">
       <div className="section-head">
         <div><h2>الطلاب</h2><p>{state.students.length} طالب · إضافة، نقل بين الشُّعب، تعديل، وحذف.</p></div>
-        <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة طالب</button>
+        <div style={{display:"flex",gap:8}}>
+          <button className="btn ghost" onClick={()=>setBulk(true)}>إضافة دفعة</button>
+          <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة طالب</button>
+        </div>
       </div>
 
       <div className="card pad" style={{marginBottom:16,display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end"}}>
-        <div className="field" style={{margin:0,flex:1,minWidth:200}}>
-          <label>بحث بالاسم</label>
-          <input className="input" value={q} onChange={e=>setQ(e.target.value)} placeholder="اكتب اسم الطالب…"/>
-        </div>
-        <div className="field" style={{margin:0,minWidth:180}}>
-          <label>تصفية بالشعبة</label>
+        <Field label="بحث بالاسم" style={{margin:0,flex:1,minWidth:200}}>
+          <input className="input" type="search" value={q} onChange={e=>setQ(e.target.value)} placeholder="اكتب اسم الطالب…"/>
+        </Field>
+        <Field label="تصفية بالشعبة" style={{margin:0,minWidth:180}}>
           <select className="input" value={fSec} onChange={e=>setFSec(e.target.value)}>
             <option value="all">كل الشُّعب</option>
             {secs.map(n=><option key={n} value={n}>شعبة {n}</option>)}
           </select>
-        </div>
+        </Field>
       </div>
 
       {list.length===0
         ? <div className="card"><div className="empty"><div className="big">◉</div>لا يوجد طلاب مطابقون.</div></div>
         : <div className="card">
-            <table className="tbl">
+            <table className="tbl cv">
               <thead><tr><th>#</th><th>الاسم</th><th>الشعبة</th><th>الصف</th><th style={{width:1}}>إجراءات</th></tr></thead>
               <tbody>
                 {list.map((s,i)=><tr key={s.id}>
@@ -868,8 +1015,31 @@ function Students({state, commit}){
           </div>}
 
       {modal && <StudentForm mode={modal.mode} student={modal.student} secs={secs} grades={state.grades} onClose={()=>setModal(null)} onSave={save}/>}
+      {bulk && <BulkStudents secs={secs} grades={state.grades} onClose={()=>setBulk(false)} onAdd={addBulk}/>}
       {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
     </div>
+  );
+}
+function BulkStudents({secs,grades,onClose,onAdd}){
+  const [text,setText]=useState("");
+  const [section,setSection]=useState(secs[0]);
+  const names=text.split("\n").map(s=>s.trim()).filter(s=>s.length>=2);
+  return (
+    <Modal title="إضافة دفعة طلاب" onClose={onClose}
+      foot={<>
+        <button className="btn" disabled={!names.length} onClick={()=>onAdd(names,section)}>إضافة {names.length?`(${names.length})`:""}</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button>
+      </>}>
+      <Field label="الشعبة">
+        <select className="input" value={section} onChange={e=>setSection(+e.target.value)}>
+          {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,grades)}</option>)}
+        </select>
+      </Field>
+      <Field label="أسماء الطلاب" hint="اكتب اسم كل طالب في سطر مستقل. سيُضافون جميعاً للشعبة المختارة.">
+        <textarea className="input" style={{minHeight:180,resize:"vertical"}} value={text} onChange={e=>setText(e.target.value)}
+          placeholder={"محمد أحمد العتيبي\nعبدالله سعد القحطاني\nخالد فهد الدوسري"}/>
+      </Field>
+    </Modal>
   );
 }
 function StudentForm({mode,student,secs,grades,onClose,onSave}){
@@ -882,12 +1052,12 @@ function StudentForm({mode,student,secs,grades,onClose,onSave}){
         <button className="btn" disabled={!valid} onClick={()=>onSave({name,section})}>حفظ</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button>
       </>}>
-      <div className="field"><label>اسم الطالب</label>
-        <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="الاسم الكامل"/></div>
-      <div className="field"><label>الشعبة {mode==="edit"&&"(تغيير الشعبة = نقل الطالب)"}</label>
+      <Field label="اسم الطالب">
+        <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="الاسم الكامل"/></Field>
+      <Field label={"الشعبة"+(mode==="edit"?" (تغيير الشعبة = نقل الطالب)":"")}>
         <select className="input" value={section} onChange={e=>setSection(+e.target.value)}>
           {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,grades)}</option>)}
-        </select></div>
+        </select></Field>
     </Modal>
   );
 }
@@ -951,8 +1121,8 @@ function TeacherForm({mode,teacher,secs,grades,onClose,onSave}){
         <button className="btn" disabled={!valid} onClick={()=>onSave({name:name.trim(),subjects,sections})}>حفظ</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button>
       </>}>
-      <div className="field"><label>الاسم الثلاثي</label>
-        <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="مثال: بدر محمد العتيبي"/></div>
+      <Field label="الاسم الثلاثي">
+        <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="مثال: بدر محمد العتيبي"/></Field>
       <div className="field"><label>المواد التي يدرّسها (اختر واحدة أو أكثر)</label>
         <div style={{display:"flex",flexWrap:"wrap"}} role="group" aria-label="المواد">
           {SUBJECTS.map(s=><button type="button" key={s} aria-pressed={subjects.includes(s)} className={"chk"+(subjects.includes(s)?" on":"")} onClick={()=>toggle(subjects,setSubjects,s)}>{s}</button>)}
@@ -1000,12 +1170,11 @@ function Schedule({state, commit}){
       </div>
 
       <div className="card pad" style={{marginBottom:16}}>
-        <div className="field" style={{margin:0,maxWidth:280}}>
-          <label>الشعبة</label>
+        <Field label="الشعبة" style={{margin:0,maxWidth:280}}>
           <select className="input" value={sec} onChange={e=>setSec(+e.target.value)}>
             {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,state.grades)}</option>)}
           </select>
-        </div>
+        </Field>
       </div>
 
       {rows.length===0
@@ -1153,20 +1322,18 @@ function CommitteeForm({state, assigned, onClose, onCreate}){
         <button className="btn ghost" onClick={onClose}>إلغاء</button>
       </>}>
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
-        <div className="field" style={{margin:0}}>
-          <label>الشعبة الأولى (الاختيار 1)</label>
+        <Field label="الشعبة الأولى (الاختيار 1)" style={{margin:0}}>
           <select className="input" value={secA} onChange={e=>{setSecA(e.target.value);setSecB("");}}>
             <option value="">— اختر —</option>
             {secs.map(n=><option key={n} value={n}>شعبة {n} · {gradeName(n,grades)} · متاح {availBySec(n).length}</option>)}
           </select>
-        </div>
-        <div className="field" style={{margin:0}}>
-          <label>الشعبة الثانية (الاختيار 2) — من صف مختلف</label>
+        </Field>
+        <Field label="الشعبة الثانية (الاختيار 2) — من صف مختلف" style={{margin:0}}>
           <select className="input" value={secB} onChange={e=>setSecB(e.target.value)} disabled={!secA}>
             <option value="">— اختر —</option>
             {bOptions.map(n=><option key={n} value={n}>شعبة {n} · {gradeName(n,grades)} · متاح {availBySec(n).length}</option>)}
           </select>
-        </div>
+        </Field>
       </div>
 
       {secA && !bOptions.length &&
@@ -1177,31 +1344,27 @@ function CommitteeForm({state, assigned, onClose, onCreate}){
           <span>⇄</span><div>التقسيم بين الشعبتين — المتاح: شعبة {secA} = {maxA} طالب · شعبة {secB} = {maxB} طالب. <button className="btn ghost sm" style={{marginRight:8}} onClick={half}>نص بنص</button></div>
         </div>
         <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
-          <div className="field" style={{margin:0}}>
-            <label>عدد من شعبة {secA}</label>
-            <input className="input" type="number" min="0" max={maxA} value={nA} onChange={e=>setNA(Math.max(0,+e.target.value||0))}/>
-            {nA>maxA && <div style={{color:"var(--danger)",fontSize:12,marginTop:4}}>أكبر من المتاح ({maxA})</div>}
-          </div>
-          <div className="field" style={{margin:0}}>
-            <label>عدد من شعبة {secB}</label>
-            <input className="input" type="number" min="0" max={maxB} value={nB} onChange={e=>setNB(Math.max(0,+e.target.value||0))}/>
-            {nB>maxB && <div style={{color:"var(--danger)",fontSize:12,marginTop:4}}>أكبر من المتاح ({maxB})</div>}
-          </div>
+          <Field label={"عدد من شعبة "+secA} style={{margin:0}} hint={nA>maxA?`أكبر من المتاح (${maxA})`:undefined}>
+            <input className="input" type="number" min="0" max={maxA} value={nA} onChange={e=>setNA(Math.max(0,+e.target.value||0))} aria-invalid={nA>maxA}/>
+          </Field>
+          <Field label={"عدد من شعبة "+secB} style={{margin:0}} hint={nB>maxB?`أكبر من المتاح (${maxB})`:undefined}>
+            <input className="input" type="number" min="0" max={maxB} value={nB} onChange={e=>setNB(Math.max(0,+e.target.value||0))} aria-invalid={nB>maxB}/>
+          </Field>
         </div>
         <div style={{textAlign:"center",margin:"6px 0 4px",fontFamily:"El Messiri",fontSize:18}}>حجم اللجنة: {nA+nB} طالب</div>
       </>}
 
       <div style={{borderTop:"1px solid var(--line)",margin:"18px 0 16px"}}/>
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
-        <div className="field" style={{margin:0}}><label>المادة (اختياري)</label>
+        <Field label="المادة (اختياري)" style={{margin:0}}>
           <select className="input" value={subject} onChange={e=>setSubject(e.target.value)}>
             <option value="">— بدون —</option>{SUBJECTS.map(s=><option key={s}>{s}</option>)}
-          </select></div>
-        <div className="field" style={{margin:0}}><label>التاريخ (اختياري)</label>
-          <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)}/></div>
+          </select></Field>
+        <Field label="التاريخ (اختياري)" style={{margin:0}}>
+          <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)}/></Field>
       </div>
-      <div className="field" style={{margin:"14px 0 0"}}><label>مقر الاختبار</label>
-        <input className="input" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="مثال: قاعة 3 — الدور الأول"/></div>
+      <Field label="مقر الاختبار" style={{margin:"14px 0 0"}}>
+        <input className="input" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="مثال: قاعة 3 — الدور الأول"/></Field>
     </Modal>
   );
 }
@@ -1294,10 +1457,10 @@ function Settings({state, commit}){
       <div className="card pad" style={{marginBottom:18}}>
         <h3 style={{marginTop:0}}>عام</h3>
         <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
-          <div className="field" style={{margin:0}}><label>عدد الشُّعب في المدرسة</label>
-            <input className="input" type="number" min="1" max="60" value={count} onChange={e=>setCount(e.target.value)}/></div>
-          <div className="field" style={{margin:0}}><label>حد التنبيه للغياب (عدد المرات)</label>
-            <input className="input" type="number" min="1" value={threshold} onChange={e=>setThreshold(e.target.value)}/></div>
+          <Field label="عدد الشُّعب في المدرسة" style={{margin:0}}>
+            <input className="input" type="number" min="1" max="60" value={count} onChange={e=>setCount(e.target.value)}/></Field>
+          <Field label="حد التنبيه للغياب (عدد المرات)" style={{margin:0}}>
+            <input className="input" type="number" min="1" value={threshold} onChange={e=>setThreshold(e.target.value)}/></Field>
         </div>
       </div>
 
@@ -1308,13 +1471,13 @@ function Settings({state, commit}){
         </div>
         <p style={{color:"var(--ink-soft)",fontSize:13,marginTop:0}}>حدّد لكل صف من أي شعبة إلى أي شعبة (مثال: أول ثانوي من 1 إلى 6).</p>
         {grades.map(g=><div key={g.id} style={{display:"flex",gap:10,alignItems:"flex-end",marginBottom:10,flexWrap:"wrap"}}>
-          <div className="field" style={{margin:0,flex:1,minWidth:150}}><label>اسم الصف</label>
-            <input className="input" value={g.name} onChange={e=>updG(g.id,{name:e.target.value})}/></div>
-          <div className="field" style={{margin:0,width:90}}><label>من</label>
-            <input className="input" type="number" min="1" value={g.from} onChange={e=>updG(g.id,{from:+e.target.value})}/></div>
-          <div className="field" style={{margin:0,width:90}}><label>إلى</label>
-            <input className="input" type="number" min="1" value={g.to} onChange={e=>updG(g.id,{to:+e.target.value})}/></div>
-          <button className="btn danger sm" style={{marginBottom:15}} onClick={()=>delG(g.id)}>حذف</button>
+          <Field label="اسم الصف" style={{margin:0,flex:1,minWidth:150}}>
+            <input className="input" value={g.name} onChange={e=>updG(g.id,{name:e.target.value})}/></Field>
+          <Field label="من" style={{margin:0,width:90}}>
+            <input className="input" type="number" min="1" value={g.from} onChange={e=>updG(g.id,{from:+e.target.value})}/></Field>
+          <Field label="إلى" style={{margin:0,width:90}}>
+            <input className="input" type="number" min="1" value={g.to} onChange={e=>updG(g.id,{to:+e.target.value})}/></Field>
+          <button className="btn danger sm" style={{marginBottom:15}} onClick={()=>delG(g.id)} aria-label={"حذف صف "+g.name}>حذف</button>
         </div>)}
         <button className="btn" style={{marginTop:8}} onClick={saveMeta}>حفظ الإعدادات</button>
       </div>
@@ -1370,15 +1533,15 @@ function AccountForm({mode,u,onClose,onSave}){
     <Modal title={mode==="add"?"حساب جديد":"تعديل الحساب"} onClose={onClose}
       foot={<><button className="btn" disabled={!valid} onClick={()=>onSave({name:name.trim(),username:username.trim(),password,role})}>حفظ</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
-      <div className="field"><label>الاسم</label><input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus/></div>
-      <div className="field"><label>اسم المستخدم</label><input className="input" value={username} onChange={e=>setUsername(e.target.value)}/></div>
-      <div className="field"><label>كلمة المرور</label><input className="input" value={password} onChange={e=>setPassword(e.target.value)}/></div>
-      <div className="field" style={{margin:0}}><label>الصلاحية</label>
+      <Field label="الاسم"><input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus/></Field>
+      <Field label="اسم المستخدم"><input className="input" name="username" autoComplete="off" value={username} onChange={e=>setUsername(e.target.value)}/></Field>
+      <Field label="كلمة المرور"><input className="input" value={password} onChange={e=>setPassword(e.target.value)}/></Field>
+      <Field label="الصلاحية" style={{margin:0}}>
         <select className="input" value={role} onChange={e=>setRole(e.target.value)}>
           <option value="manager">مدير — كامل الصلاحيات</option>
           <option value="deputy">وكيل</option>
           <option value="teacher">معلم</option>
-        </select></div>
+        </select></Field>
     </Modal>
   );
 }
