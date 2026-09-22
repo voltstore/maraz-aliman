@@ -2,7 +2,8 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#163f35" />
 <title>ثانوية مارز الإيمان — المنصة الإدارية</title>
 <meta name="description" content="منصة إدارية لثانوية مارز الإيمان: الحضور والغياب، إدارة الطلاب والمعلمين، ولجان الاختبارات." />
 
@@ -49,6 +50,7 @@
     --r-sm:10px;
   }
   *{box-sizing:border-box}
+  html{color-scheme:light}
   html,body{margin:0;padding:0}
   body{
     font-family:"IBM Plex Sans Arabic",system-ui,sans-serif;
@@ -56,10 +58,15 @@
     color:var(--ink);
     line-height:1.7;
     -webkit-font-smoothing:antialiased;
+    touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent;
     background-image:radial-gradient(circle at 12% -10%, #ffffff8c 0, transparent 45%),
                      radial-gradient(circle at 110% 0%, #e9f0ec66 0, transparent 40%);
     background-attachment:fixed;
   }
+  /* Visible keyboard focus for all interactive elements */
+  :focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:6px}
+  .btn:focus-visible,.chk:focus-visible{outline-offset:3px}
   h1,h2,h3,h4,.display{font-family:"El Messiri",serif;font-weight:600;line-height:1.25}
   button{font-family:inherit}
   input,select,textarea{font-family:inherit}
@@ -84,8 +91,10 @@
   .brand span{font-size:12px;color:#ffffff9c;display:block;font-family:"IBM Plex Sans Arabic"}
   .nav-item{
     display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;cursor:pointer;
-    color:#d6e0da;font-size:15px;font-weight:500;transition:all .16s cubic-bezier(.4,0,.2,1);
+    color:#d6e0da;font-size:15px;font-weight:500;
+    transition:background .16s cubic-bezier(.4,0,.2,1),color .16s cubic-bezier(.4,0,.2,1),box-shadow .16s;
     border:1px solid transparent;position:relative;
+    width:100%;text-align:right;font-family:inherit;background:transparent;
   }
   .nav-item:hover{background:#ffffff14;color:#fff}
   .nav-item.active{background:var(--paper);color:var(--brand-deep);font-weight:600;box-shadow:var(--shadow)}
@@ -169,7 +178,7 @@
 
   .stat{background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r);padding:20px;position:relative;overflow:hidden}
   .stat .k{font-size:13px;color:var(--ink-soft);font-weight:600}
-  .stat .v{font-size:32px;font-family:"El Messiri";font-weight:700;margin-top:4px;line-height:1}
+  .stat .v{font-size:32px;font-family:"El Messiri";font-weight:700;margin-top:4px;line-height:1;font-variant-numeric:tabular-nums}
   .stat .foot{font-size:12px;color:var(--ink-faint);margin-top:8px}
   .stat .glyph{position:absolute;left:-6px;top:-10px;font-size:64px;opacity:.06}
 
@@ -178,18 +187,19 @@
   .bar-track{flex:1;height:12px;background:var(--paper-3);border-radius:20px;overflow:hidden}
   .bar-fill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--brand),#2c7a68);transition:width .6s cubic-bezier(.2,.7,.2,1)}
   .bar-fill.hot{background:linear-gradient(90deg,var(--accent),#d97a54)}
-  .bar-row .num{width:44px;text-align:left;font-weight:700;font-family:"El Messiri"}
+  .bar-row .num{width:44px;text-align:left;font-weight:700;font-family:"El Messiri";font-variant-numeric:tabular-nums}
+  table.tbl td{font-variant-numeric:tabular-nums}
 
   /* ---------- Modal ---------- */
-  .overlay{position:fixed;inset:0;background:#221d1866;backdrop-filter:blur(3px);z-index:100;
+  .overlay{position:fixed;inset:0;background:#221d1899;backdrop-filter:blur(3px);z-index:100;
     display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;
-    animation:fade .18s ease both}
+    overscroll-behavior:contain;animation:fade .18s ease both}
   .modal{background:var(--paper-2);border-radius:18px;box-shadow:var(--shadow-lg);width:100%;max-width:560px;
     border:1px solid var(--line);animation:pop .22s cubic-bezier(.2,.8,.2,1) both;margin:auto}
   .modal.wide{max-width:860px}
   .modal-head{padding:20px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
   .modal-head h3{margin:0;font-size:20px}
-  .modal-body{padding:22px 24px;max-height:70vh;overflow-y:auto}
+  .modal-body{padding:22px 24px;max-height:70vh;overflow-y:auto;overscroll-behavior:contain}
   .modal-foot{padding:16px 24px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-start}
   .x{background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink-faint);line-height:1;padding:4px}
   .x:hover{color:var(--ink)}
@@ -198,7 +208,8 @@
   .empty .big{font-size:46px;opacity:.5;margin-bottom:8px}
 
   .chk{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid var(--line-strong);
-    border-radius:9px;cursor:pointer;font-size:13.5px;background:var(--paper-2);transition:all .13s;margin:0 0 8px 8px}
+    border-radius:9px;cursor:pointer;font-size:13.5px;background:var(--paper-2);color:var(--ink);font-family:inherit;
+    transition:background .13s,border-color .13s,color .13s;margin:0 0 8px 8px}
   .chk:hover{border-color:var(--brand)}
   .chk.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand-deep);font-weight:600}
   .chk.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
@@ -245,6 +256,19 @@
   .scrim{display:none}
   .scrim.show{display:block;position:fixed;inset:0;background:#0007;z-index:55}
 
+  /* clickable card as button */
+  .qcard{width:100%;text-align:right;font-family:inherit;color:inherit;cursor:pointer;
+    transition:transform .15s cubic-bezier(.4,0,.2,1),box-shadow .15s,border-color .15s}
+  .qcard:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--line-strong)}
+  .qcard:active{transform:translateY(0)}
+
+  /* Respect reduced-motion preference */
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;
+      transition-duration:.001ms !important;scroll-behavior:auto !important}
+    .bar-fill{transition:none}
+  }
+
   /* ---------- Print (PDF export) ---------- */
   @media print{
     body{background:#fff}
@@ -287,6 +311,7 @@ const uid = () => Math.random().toString(36).slice(2,9) + Date.now().toString(36
 const todayISO = () => new Date().toISOString().slice(0,10);
 const WEEKDAYS = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
 const weekdayOf = iso => WEEKDAYS[new Date(iso+"T00:00:00").getDay()];
+const fmtDate = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{day:"numeric",month:"long",year:"numeric"}).format(new Date(iso+"T00:00:00")); }catch(e){ return iso; } };
 
 const SUBJECTS = [
   "التقنية الرقمية","التربية الصحية والبدنية","اللغة الإنجليزية","التفكير الناقد",
@@ -364,7 +389,9 @@ function ToastHost({children}){
   return (
     <ToastCtx.Provider value={show}>
       {children}
-      {t && <div key={t.k} className={"toast "+t.type}>{t.msg}</div>}
+      <div aria-live="polite" role="status">
+        {t && <div key={t.k} className={"toast "+t.type}>{t.msg}</div>}
+      </div>
     </ToastCtx.Provider>
   );
 }
@@ -379,7 +406,7 @@ function Modal({title, onClose, children, foot, wide}){
   return (
     <div className="overlay" onMouseDown={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div className={"modal"+(wide?" wide":"")}>
-        <div className="modal-head"><h3>{title}</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="modal-head"><h3>{title}</h3><button className="x" aria-label="إغلاق" onClick={onClose}>×</button></div>
         <div className="modal-body">{children}</div>
         {foot && <div className="modal-foot">{foot}</div>}
       </div>
@@ -426,14 +453,16 @@ function Login({state, onLogin}){
           <h2 style={{fontSize:28,margin:"0 0 6px"}}>أهلاً بك</h2>
           <p style={{color:"var(--ink-soft)",marginTop:0,fontSize:14}}>ادخل بيانات حسابك للمتابعة.</p>
           <div className="field">
-            <label>اسم المستخدم</label>
-            <input className="input" value={u} onChange={e=>setU(e.target.value)} placeholder="admin" autoFocus/>
+            <label htmlFor="login-user">اسم المستخدم</label>
+            <input id="login-user" name="username" autoComplete="username" className="input" value={u} onChange={e=>setU(e.target.value)} placeholder="admin"/>
           </div>
           <div className="field">
-            <label>كلمة المرور</label>
-            <input className="input" type="password" value={p} onChange={e=>setP(e.target.value)} placeholder="••••"/>
+            <label htmlFor="login-pass">كلمة المرور</label>
+            <input id="login-pass" name="password" autoComplete="current-password" className="input" type="password" value={p} onChange={e=>setP(e.target.value)} placeholder="••••"/>
           </div>
-          {err && <div style={{color:"var(--danger)",fontSize:13,marginBottom:12}}>{err}</div>}
+          <div aria-live="polite">
+            {err && <div style={{color:"var(--danger)",fontSize:13,marginBottom:12}}>{err}</div>}
+          </div>
           <button className="btn" style={{width:"100%"}} type="submit">دخول</button>
           <p style={{fontSize:12,color:"var(--ink-faint)",marginTop:16,textAlign:"center"}}>
             تجريبي: admin / 1234 &nbsp;·&nbsp; wakeel / 1234
@@ -493,12 +522,15 @@ function Shell({state, commit, user, onLogout}){
           <div className="seal">م</div>
           <div><h1>مارز الإيمان</h1><span>المنصة الإدارية</span></div>
         </div>
+        <nav aria-label="التنقّل الرئيسي" style={{display:"contents"}}>
         {items.map((n,i)=> n.sep
           ? <div className="nav-sep" key={"s"+i}>{n.sep}</div>
-          : <div key={n.id} className={"nav-item"+(page===n.id?" active":"")} onClick={()=>go(n.id)}>
-              <span className="ic">{n.ic}</span>{n.label}
-            </div>
+          : <button key={n.id} type="button" className={"nav-item"+(page===n.id?" active":"")}
+              aria-current={page===n.id?"page":undefined} onClick={()=>go(n.id)}>
+              <span className="ic" aria-hidden="true">{n.ic}</span>{n.label}
+            </button>
         )}
+        </nav>
         <div className="nav-foot">
           {FIREBASE_READY ? "◉ متصل بالسحابة" : "○ حفظ محلي"} · الإصدار 1.0
           <div style={{marginTop:6,color:"#ffffff66"}}>من صنع مصطفى عبدالله أحمد</div>
@@ -508,7 +540,7 @@ function Shell({state, commit, user, onLogout}){
       <div className="main">
         <div className="topbar">
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <button className="menu-btn no-print" onClick={()=>setNavOpen(v=>!v)}>☰</button>
+            <button className="menu-btn no-print" aria-label="فتح القائمة" aria-expanded={navOpen} onClick={()=>setNavOpen(v=>!v)}>☰</button>
             <div>
               <h2 className="page-title">{active.label}</h2>
               <div className="sub">{state.meta.schoolName}</div>
@@ -540,7 +572,7 @@ function Dashboard({state, user, go}){
     <div className="rise">
       <div className="section-head">
         <div>
-          <div className="eyebrow">{weekdayOf(today)} · {today}</div>
+          <div className="eyebrow">{weekdayOf(today)} · {fmtDate(today)}</div>
           <h2>أهلاً {user.name} 👋</h2>
           <p>نظرة سريعة على وضع المدرسة اليوم.</p>
         </div>
@@ -567,11 +599,11 @@ function Stat({k,v,glyph,foot}){
 }
 function QuickCard({title,desc,ic,onClick}){
   return (
-    <div className="card pad" style={{cursor:"pointer"}} onClick={onClick}>
-      <div style={{fontSize:26,color:"var(--brand)",marginBottom:8}}>{ic}</div>
+    <button type="button" className="card pad qcard" onClick={onClick}>
+      <div style={{fontSize:26,color:"var(--brand)",marginBottom:8}} aria-hidden="true">{ic}</div>
       <h3 style={{margin:"0 0 4px",fontSize:18}}>{title}</h3>
       <p style={{margin:0,color:"var(--ink-soft)",fontSize:13.5}}>{desc}</p>
-    </div>
+    </button>
   );
 }
 
@@ -804,7 +836,7 @@ function Students({state, commit}){
       <div className="card pad" style={{marginBottom:16,display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end"}}>
         <div className="field" style={{margin:0,flex:1,minWidth:200}}>
           <label>بحث بالاسم</label>
-          <input className="input" value={q} onChange={e=>setQ(e.target.value)} placeholder="اكتب اسم الطالب..."/>
+          <input className="input" value={q} onChange={e=>setQ(e.target.value)} placeholder="اكتب اسم الطالب…"/>
         </div>
         <div className="field" style={{margin:0,minWidth:180}}>
           <label>تصفية بالشعبة</label>
@@ -922,12 +954,12 @@ function TeacherForm({mode,teacher,secs,grades,onClose,onSave}){
       <div className="field"><label>الاسم الثلاثي</label>
         <input className="input" value={name} onChange={e=>setName(e.target.value)} autoFocus placeholder="مثال: بدر محمد العتيبي"/></div>
       <div className="field"><label>المواد التي يدرّسها (اختر واحدة أو أكثر)</label>
-        <div style={{display:"flex",flexWrap:"wrap"}}>
-          {SUBJECTS.map(s=><span key={s} className={"chk"+(subjects.includes(s)?" on":"")} onClick={()=>toggle(subjects,setSubjects,s)}>{s}</span>)}
+        <div style={{display:"flex",flexWrap:"wrap"}} role="group" aria-label="المواد">
+          {SUBJECTS.map(s=><button type="button" key={s} aria-pressed={subjects.includes(s)} className={"chk"+(subjects.includes(s)?" on":"")} onClick={()=>toggle(subjects,setSubjects,s)}>{s}</button>)}
         </div></div>
       <div className="field" style={{margin:0}}><label>الشُّعب التي يدرّسها</label>
-        <div style={{display:"flex",flexWrap:"wrap"}}>
-          {secs.map(n=><span key={n} className={"chk"+(sections.includes(n)?" on":"")} onClick={()=>toggle(sections,setSections,n)}>شعبة {n} · {gradeName(n,grades)}</span>)}
+        <div style={{display:"flex",flexWrap:"wrap"}} role="group" aria-label="الشُّعب">
+          {secs.map(n=><button type="button" key={n} aria-pressed={sections.includes(n)} className={"chk"+(sections.includes(n)?" on":"")} onClick={()=>toggle(sections,setSections,n)}>شعبة {n} · {gradeName(n,grades)}</button>)}
         </div></div>
     </Modal>
   );
@@ -1002,8 +1034,8 @@ function CopySchedule({secs,current,grades,onClose,onCopy}){
       foot={<><button className="btn" disabled={!sel.length} onClick={()=>onCopy(sel)}>نسخ ({sel.length})</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
       <p style={{marginTop:0,color:"var(--ink-soft)",fontSize:13.5}}>سيُستبدل جدول الشُّعب المختارة بنسخة من جدول شعبة {current}.</p>
-      <div style={{display:"flex",flexWrap:"wrap"}}>
-        {secs.filter(n=>n!==current).map(n=><span key={n} className={"chk"+(sel.includes(n)?" on":"")} onClick={()=>toggle(n)}>شعبة {n} · {gradeName(n,grades)}</span>)}
+      <div style={{display:"flex",flexWrap:"wrap"}} role="group" aria-label="الشُّعب المستهدفة">
+        {secs.filter(n=>n!==current).map(n=><button type="button" key={n} aria-pressed={sel.includes(n)} className={"chk"+(sel.includes(n)?" on":"")} onClick={()=>toggle(n)}>شعبة {n} · {gradeName(n,grades)}</button>)}
       </div>
     </Modal>
   );
@@ -1058,7 +1090,7 @@ function Committees({state, commit}){
                     <div className="eyebrow">لجنة رقم {c.number}</div>
                     <h3 style={{margin:"2px 0 0",fontSize:19}}>{c.subject||"اختبار"}</h3>
                     <div style={{fontSize:12.5,color:"var(--ink-soft)",marginTop:2}}>
-                      {c.date?`${weekdayOf(c.date)} ${c.date} · `:""}{c.venue||"—"}
+                      {c.date?`${weekdayOf(c.date)} ${fmtDate(c.date)} · `:""}{c.venue||"—"}
                     </div>
                   </div>
                   <span className="tag brand">{c.studentIds.length} طالب</span>
@@ -1120,7 +1152,7 @@ function CommitteeForm({state, assigned, onClose, onCreate}){
         <button className="btn accent" disabled={!okCounts||!secB} onClick={submit}>اعتماد اللجنة ({nA+nB} طالب)</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button>
       </>}>
-      <div className="grid" style={{gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
         <div className="field" style={{margin:0}}>
           <label>الشعبة الأولى (الاختيار 1)</label>
           <select className="input" value={secA} onChange={e=>{setSecA(e.target.value);setSecB("");}}>
@@ -1144,7 +1176,7 @@ function CommitteeForm({state, assigned, onClose, onCreate}){
         <div className="banner info" style={{marginTop:16,marginBottom:10}}>
           <span>⇄</span><div>التقسيم بين الشعبتين — المتاح: شعبة {secA} = {maxA} طالب · شعبة {secB} = {maxB} طالب. <button className="btn ghost sm" style={{marginRight:8}} onClick={half}>نص بنص</button></div>
         </div>
-        <div className="grid" style={{gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
           <div className="field" style={{margin:0}}>
             <label>عدد من شعبة {secA}</label>
             <input className="input" type="number" min="0" max={maxA} value={nA} onChange={e=>setNA(Math.max(0,+e.target.value||0))}/>
@@ -1160,7 +1192,7 @@ function CommitteeForm({state, assigned, onClose, onCreate}){
       </>}
 
       <div style={{borderTop:"1px solid var(--line)",margin:"18px 0 16px"}}/>
-      <div className="grid" style={{gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
         <div className="field" style={{margin:0}}><label>المادة (اختياري)</label>
           <select className="input" value={subject} onChange={e=>setSubject(e.target.value)}>
             <option value="">— بدون —</option>{SUBJECTS.map(s=><option key={s}>{s}</option>)}
@@ -1261,7 +1293,7 @@ function Settings({state, commit}){
 
       <div className="card pad" style={{marginBottom:18}}>
         <h3 style={{marginTop:0}}>عام</h3>
-        <div className="grid" style={{gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
           <div className="field" style={{margin:0}}><label>عدد الشُّعب في المدرسة</label>
             <input className="input" type="number" min="1" max="60" value={count} onChange={e=>setCount(e.target.value)}/></div>
           <div className="field" style={{margin:0}}><label>حد التنبيه للغياب (عدد المرات)</label>
@@ -1355,7 +1387,7 @@ function AccountForm({mode,u,onClose,onSave}){
 function App(){
   const [state,commit]=useStore();
   const [user,setUser]=useState(null);
-  if(!state) return <div style={{display:"grid",placeItems:"center",height:"100vh",color:"var(--ink-soft)"}}>...جاري التحميل</div>;
+  if(!state) return <div style={{display:"grid",placeItems:"center",height:"100vh",color:"var(--ink-soft)"}}>جاري التحميل…</div>;
   return (
     <ToastHost>
       {user
