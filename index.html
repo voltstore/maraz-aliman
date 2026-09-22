@@ -218,6 +218,13 @@
   .chk.on{background:var(--brand-soft);border-color:var(--brand);color:var(--brand-deep);font-weight:600}
   .chk.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
 
+  .pick{display:flex;align-items:center;gap:8px;padding:12px 14px;border:1.5px solid var(--line-strong);
+    border-radius:12px;background:var(--paper-2);color:var(--ink);font-family:inherit;font-size:14.5px;
+    font-weight:600;cursor:pointer;text-align:right;transition:background .12s,border-color .12s,transform .08s}
+  .pick:hover{border-color:var(--brand)}
+  .pick:active{transform:scale(.98)}
+  .chk:disabled{cursor:not-allowed;opacity:.75}
+
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:200;
     background:var(--ink);color:#fff;padding:12px 22px;border-radius:12px;font-size:14px;font-weight:500;
     box-shadow:var(--shadow-lg);animation:toastIn .3s cubic-bezier(.2,.8,.2,1) both}
@@ -322,13 +329,13 @@ const userToEmail = u => (u.includes("@") ? u : u.trim().toLowerCase()+AUTH_DOMA
 const USERS_COL = "maraz_users";
 
 // إنشاء حساب عبر تطبيق ثانوي حتى لا يخرج المدير من جلسته
-async function createAuthAccount({username,name,role,password}){
+async function createAuthAccount({username,name,role,password,perms}){
   if(!secApp) secApp = firebase.initializeApp(FB, "secondary");
   const secAuth = secApp.auth();
   try{ await secAuth.setPersistence(firebase.auth.Auth.Persistence.NONE); }catch(_){}
   const cred = await secAuth.createUserWithEmailAndPassword(userToEmail(username), password);
   const uid = cred.user.uid;
-  await fdb.collection(USERS_COL).doc(uid).set({username:username.trim().toLowerCase(), name:name.trim(), role});
+  await fdb.collection(USERS_COL).doc(uid).set({username:username.trim().toLowerCase(), name:name.trim(), role, perms:(role==="teacher"?(perms||[]):[])});
   await secAuth.signOut();
   return uid;
 }
@@ -543,16 +550,16 @@ function Login({localUsers, onLocalLogin, authErr, setAuthErr}){
 const NAV = [
   {sep:"الرئيسية"},
   {id:"dashboard", label:"لوحة المعلومات", ic:"◧", roles:["manager","deputy","teacher"]},
-  {id:"attendance", label:"الحضور والغياب", ic:"✓", roles:["manager","deputy","teacher"]},
+  {id:"attendance", label:"الحضور والغياب", ic:"✓", roles:["manager","deputy","teacher"], cap:"attendance"},
   {id:"records", label:"سجلات الطلاب", ic:"▦", roles:["manager","deputy","teacher"]},
   {id:"stats", label:"التقارير والإحصائيات", ic:"◔", roles:["manager","deputy"]},
   {id:"monitor", label:"مراقبة الغياب", ic:"◎", roles:["manager","deputy"]},
   {sep:"الإدارة"},
-  {id:"students", label:"الطلاب", ic:"◉", roles:["manager","deputy"]},
+  {id:"students", label:"الطلاب", ic:"◉", roles:["manager","deputy","teacher"], show:u=>can(u,"students")||can(u,"transfer")},
   {id:"teachers", label:"المعلمون", ic:"✎", roles:["manager","deputy"]},
   {sep:"الاختبارات"},
   {id:"schedule", label:"جدول الاختبارات", ic:"▤", roles:["manager","deputy"]},
-  {id:"committees", label:"لجان الاختبارات", ic:"⬚", roles:["manager","deputy"]},
+  {id:"committees", label:"لجان الاختبارات", ic:"⬚", roles:["manager","deputy","teacher"], cap:"committees"},
   {sep:"النظام"},
   {id:"profile", label:"حسابي", ic:"◍", roles:["manager","deputy","teacher"]},
   {id:"settings", label:"الإعدادات", ic:"⚙", roles:["manager","deputy"]},
@@ -561,12 +568,21 @@ const NAV = [
 
 /* ========================= SHELL ========================= */
 function Shell({state, commit, user, onLogout, onUserUpdate}){
-  const allowed = id => { const n=NAV.find(x=>x.id===id); return n && n.roles.includes(user.role); };
+  const visible = n => {
+    if(n.sep) return true;
+    if(!n.roles.includes(user.role)) return false;
+    if(n.show) return n.show(user);
+    if(n.cap) return can(user,n.cap);
+    return true;
+  };
+  const allowed = id => { const n=NAV.find(x=>x.id===id); return !!n && !n.sep && visible(n); };
   const initial = (()=>{ const h=(location.hash||"").replace("#",""); return allowed(h)?h:"dashboard"; })();
   const [page,setPage]=useState(initial);
   const [navOpen,setNavOpen]=useState(false);
-  const items = NAV.filter(n=>n.sep || n.roles.includes(user.role));
-  const active = NAV.find(n=>n.id===page) || {label:"لوحة المعلومات"};
+  const raw = NAV.filter(visible);
+  const items = raw.filter((n,i)=>{ if(!n.sep) return true; for(let j=i+1;j<raw.length;j++){ if(raw[j].sep) return false; return true; } return false; });
+  const safePage = allowed(page)?page:"dashboard";
+  const active = NAV.find(n=>n.id===safePage) || {label:"لوحة المعلومات"};
 
   const go = id => { setPage(id); setNavOpen(false); if(location.hash!=="#"+id) location.hash=id; };
 
@@ -589,7 +605,7 @@ function Shell({state, commit, user, onLogout, onUserUpdate}){
     profile:<Profile user={user} commit={commit} onUserUpdate={onUserUpdate}/>,
     settings:<Settings state={state} commit={commit}/>,
     accounts:<Accounts state={state} commit={commit} user={user}/>,
-  }[page];
+  }[safePage];
 
   return (
     <div className="app">
@@ -637,6 +653,21 @@ function Shell({state, commit, user, onLogout, onUserUpdate}){
   );
 }
 const roleLabel = r => ({manager:"مدير",deputy:"وكيل",teacher:"معلم"}[r]||r);
+
+/* ---- الصلاحيات ---- */
+const CAPS=[
+  {key:"attendance", label:"تحضير الطلاب"},
+  {key:"students",   label:"إضافة طالب وحذفه"},
+  {key:"transfer",   label:"نقل طالب بين الفصول"},
+  {key:"incidents",  label:"رفع مخالفة على الطالب"},
+  {key:"committees", label:"إنشاء لجان الاختبارات"},
+];
+function can(user, cap){
+  if(!user) return false;
+  if(user.role==="manager"||user.role==="deputy") return true; // كامل الصلاحيات
+  const p=user.perms||[];
+  return p.includes("all")||p.includes(cap);
+}
 
 /* ========================= DASHBOARD ========================= */
 function Dashboard({state, user, go}){
@@ -709,19 +740,44 @@ function Attendance({state, commit, user}){
     });
     toast("تم تحديث الشعبة كاملة");
   };
+  const [mode,setMode]=useState("quickAbsent"); // quickAbsent | quickPresent | detail
+  const [picked,setPicked]=useState(()=>new Set());
+  useEffect(()=>{ setPicked(new Set()); },[sec,date,mode]);
+  const togglePick=id=>setPicked(p=>{ const n=new Set(p); n.has(id)?n.delete(id):n.add(id); return n; });
+
+  const saveQuick=()=>{
+    const t=nowISO();
+    commit(prev=>{
+      const day={...(prev.attendance[date]||{})};
+      const meta={...((prev.attMeta||{})[date]||{})};
+      roster.forEach(s=>{
+        const on=picked.has(s.id);
+        day[s.id]= mode==="quickAbsent" ? (on?"absent":"present") : (on?"present":"absent");
+        meta[s.id]=t;
+      });
+      return {...prev, attendance:{...prev.attendance,[date]:day}, attMeta:{...(prev.attMeta||{}),[date]:meta}};
+    });
+    const absN = mode==="quickAbsent"?picked.size:(roster.length-picked.size);
+    toast(`تم الحفظ · غائبون ${absN} · حاضرون ${roster.length-absN}`);
+    setPicked(new Set());
+  };
+
   const isPast = date < todayISO();
+  const info = mode==="quickAbsent"
+    ? {hint:"اضغط على أسماء الطلاب الغائبين فقط. عند الحفظ، كل من لم تضغط عليه يُسجَّل حاضراً تلقائياً.", color:"var(--danger)"}
+    : {hint:"اضغط على أسماء الطلاب الحاضرين فقط. عند الحفظ، كل من لم تضغط عليه يُسجَّل غائباً تلقائياً.", color:"var(--ok)"};
 
   return (
     <div className="rise">
       <div className="section-head">
-        <div><h2>الحضور والغياب</h2><p>سجّل الحضور اليومي، أو عدّل حالة سابقة بأثر رجعي.</p></div>
+        <div><h2>الحضور والغياب</h2><p>سجّل الحضور بسرعة بتحديد الغائبين أو الحاضرين، أو استخدم الوضع التفصيلي.</p></div>
       </div>
 
-      {isPast && <div className="banner info">✎ أنت تعدّل يوماً سابقاً ({weekdayOf(date)}). يمكنك تغيير أي حالة — مثلاً من «غائب» إلى «غائب بعذر».</div>}
+      {isPast && <div className="banner info">✎ أنت في يوم سابق ({weekdayOf(date)}). أي حفظ سيعدّل سجل ذلك اليوم.</div>}
 
-      <div className="card pad" style={{marginBottom:18}}>
+      <div className="card pad" style={{marginBottom:14}}>
         <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-end"}}>
-          <Field label="التاريخ" style={{margin:0,minWidth:170}}>
+          <Field label="التاريخ" style={{margin:0,minWidth:160}}>
             <input className="input" type="date" value={date} max={todayISO()} onChange={e=>setDate(e.target.value)}/>
           </Field>
           <Field label="الشعبة" style={{margin:0,minWidth:170}}>
@@ -729,16 +785,23 @@ function Attendance({state, commit, user}){
               {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,state.grades)}</option>)}
             </select>
           </Field>
-          <div style={{marginRight:"auto",display:"flex",gap:8}}>
-            <button className="btn ghost sm" onClick={()=>markAll("present")} disabled={!roster.length}>تحضير الكل</button>
-            <button className="btn ghost sm" onClick={()=>markAll("absent")} disabled={!roster.length}>تغييب الكل</button>
-          </div>
         </div>
+      </div>
+
+      <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+        <button className={"btn "+(mode==="quickAbsent"?"":"ghost")} onClick={()=>setMode("quickAbsent")}>تحديد الغائبين</button>
+        <button className={"btn "+(mode==="quickPresent"?"":"ghost")} onClick={()=>setMode("quickPresent")}>تحديد الحاضرين</button>
+        <button className={"btn "+(mode==="detail"?"":"ghost")} onClick={()=>setMode("detail")}>تفصيلي (تأخير/عذر)</button>
       </div>
 
       {roster.length===0
         ? <div className="card"><div className="empty"><div className="big">◉</div>لا يوجد طلاب في شعبة {sec} بعد.<br/><span style={{fontSize:13}}>أضف طلاباً من صفحة «الطلاب».</span></div></div>
-        : <div className="card">
+        : mode==="detail"
+        ? <div className="card">
+            <div style={{padding:"12px 16px 0",display:"flex",gap:8}}>
+              <button className="btn ghost sm" onClick={()=>markAll("present")}>تحضير الكل</button>
+              <button className="btn ghost sm" onClick={()=>markAll("absent")}>تغييب الكل</button>
+            </div>
             <table className="tbl">
               <thead><tr><th>#</th><th>اسم الطالب</th><th>الحالة</th><th style={{width:"46%"}}>تسجيل</th></tr></thead>
               <tbody>
@@ -758,7 +821,34 @@ function Attendance({state, commit, user}){
                 })}
               </tbody>
             </table>
-          </div>}
+          </div>
+        : <>
+            <div className="banner info"><span>☞</span><div>{info.hint}</div></div>
+            <div className="card pad">
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(165px,1fr))",gap:10}}>
+                {roster.map((s,i)=>{
+                  const on=picked.has(s.id); const saved=rec[s.id];
+                  return <button key={s.id} type="button" className="pick" aria-pressed={on} onClick={()=>togglePick(s.id)}
+                    style={on?{background:info.color,borderColor:info.color,color:"#fff"}:{}}>
+                    <span style={{opacity:.55,fontSize:12}}>{i+1}</span>
+                    <span style={{flex:1}}>{s.name}</span>
+                    {saved && !on && <span className={"pill "+saved} style={{fontSize:11}}>{statusLabel(saved)}</span>}
+                  </button>;
+                })}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginTop:16,flexWrap:"wrap",borderTop:"1px solid var(--line)",paddingTop:14}}>
+                <div style={{fontSize:14.5}}>
+                  {mode==="quickAbsent"
+                    ? <>الغائبون: <b style={{color:"var(--danger)"}}>{picked.size}</b> · الحاضرون: <b style={{color:"var(--ok)"}}>{roster.length-picked.size}</b></>
+                    : <>الحاضرون: <b style={{color:"var(--ok)"}}>{picked.size}</b> · الغائبون: <b style={{color:"var(--danger)"}}>{roster.length-picked.size}</b></>}
+                </div>
+                <div style={{marginRight:"auto",display:"flex",gap:8}}>
+                  <button className="btn ghost" onClick={()=>setPicked(new Set())} disabled={!picked.size}>مسح التحديد</button>
+                  <button className="btn" onClick={saveQuick}>حفظ الحضور</button>
+                </div>
+              </div>
+            </div>
+          </>}
     </div>
   );
 }
@@ -1120,16 +1210,18 @@ function StudentRecord({student, state, commit, user, onClose}){
           </div>)}
 
       <H>المخالفات والسوابق</H>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,marginBottom:8}}>
-        <input className="input" value={itype} onChange={e=>setItype(e.target.value)} placeholder="النوع (سلوكية/نظام…)"/>
-        <select className="input" value={sev} onChange={e=>setSev(e.target.value)} aria-label="الخطورة">
-          <option value="low">بسيطة</option><option value="mid">متوسطة</option><option value="high">جسيمة</option>
-        </select>
-      </div>
-      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-        <input className="input" style={{flex:1,minWidth:200}} value={inc} onChange={e=>setInc(e.target.value)} placeholder="وصف المخالفة/السابقة…"/>
-        <button className="btn accent" disabled={!inc.trim()} onClick={()=>{addRec({kind:"incident",text:inc.trim(),severity:sev,itype:itype.trim()});setInc("");setItype("");toast("سُجّلت المخالفة");}}>تسجيل</button>
-      </div>
+      {can(user,"incidents") && <>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8,marginBottom:8}}>
+          <input className="input" value={itype} onChange={e=>setItype(e.target.value)} placeholder="النوع (سلوكية/نظام…)"/>
+          <select className="input" value={sev} onChange={e=>setSev(e.target.value)} aria-label="الخطورة">
+            <option value="low">بسيطة</option><option value="mid">متوسطة</option><option value="high">جسيمة</option>
+          </select>
+        </div>
+        <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+          <input className="input" style={{flex:1,minWidth:200}} value={inc} onChange={e=>setInc(e.target.value)} placeholder="وصف المخالفة/السابقة…"/>
+          <button className="btn accent" disabled={!inc.trim()} onClick={()=>{addRec({kind:"incident",text:inc.trim(),severity:sev,itype:itype.trim()});setInc("");setItype("");toast("سُجّلت المخالفة");}}>تسجيل</button>
+        </div>
+      </>}
       {incidents.length===0 ? <div className="hint">لا مخالفات مسجّلة.</div>
         : incidents.map(r=><div key={r.id} className="card pad" style={{padding:"11px 14px",marginBottom:8,borderRight:"3px solid "+sevColor(r.severity)}}>
             <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}>
@@ -1155,6 +1247,8 @@ function Students({state, commit, user}){
   const [rec,setRec]=useState(null);
   const [confirm,setConfirm]=useState(null);
   const secs=sectionsRange(state.meta.sectionsCount);
+  const mayManage=can(user,"students");
+  const mayEdit=can(user,"students")||can(user,"transfer");
 
   const addBulk=(names,section)=>{
     const rows=names.map(n=>({id:uid(),name:n.trim(),section})).filter(r=>r.name.length>=2);
@@ -1193,8 +1287,8 @@ function Students({state, commit, user}){
         <div><h2>الطلاب</h2><p>{state.students.length} طالب · إضافة، نقل بين الشُّعب، تعديل، وحذف.</p></div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button className="btn ghost" onClick={()=>printRoster(list, fSec==="all"?"جميع الشُّعب":`شعبة ${fSec} — ${gradeName(+fSec,state.grades)}`, state)} disabled={!list.length}>تصدير كشف</button>
-          <button className="btn ghost" onClick={()=>setBulk(true)}>إضافة دفعة</button>
-          <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة طالب</button>
+          {mayManage && <button className="btn ghost" onClick={()=>setBulk(true)}>إضافة دفعة</button>}
+          {mayManage && <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة طالب</button>}
         </div>
       </div>
 
@@ -1223,8 +1317,8 @@ function Students({state, commit, user}){
                   <td>{gradeName(s.section,state.grades)}</td>
                   <td><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                     <button className="btn ghost sm" onClick={()=>setRec(s)}>السجل</button>
-                    <button className="btn ghost sm" onClick={()=>setModal({mode:"edit",student:s})}>تعديل</button>
-                    <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف الطالب «${s.name}»؟`,onYes:()=>remove(s)})}>حذف</button>
+                    {mayEdit && <button className="btn ghost sm" onClick={()=>setModal({mode:"edit",student:s})}>تعديل</button>}
+                    {mayManage && <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف الطالب «${s.name}»؟`,onYes:()=>remove(s)})}>حذف</button>}
                   </div></td>
                 </tr>)}
               </tbody>
@@ -1907,7 +2001,7 @@ function AccountsCloud({me}){
     }finally{ setBusy(false); }
   };
   const saveEdit=async(id,data)=>{
-    try{ await fdb.collection(USERS_COL).doc(id).update({name:data.name.trim(),role:data.role}); toast("تم الحفظ"); setModal(null); }
+    try{ await fdb.collection(USERS_COL).doc(id).update({name:data.name.trim(),role:data.role,perms:(data.role==="teacher"?(data.perms||[]):[])}); toast("تم الحفظ"); setModal(null); }
     catch(e){ toast("تعذّر الحفظ","err"); }
   };
   const remove=async(u)=>{
@@ -1931,7 +2025,10 @@ function AccountsCloud({me}){
             <tbody>{users.map(u=><tr key={u.id}>
               <td style={{fontWeight:600}}>{u.name}</td>
               <td style={{color:"var(--ink-soft)"}}>{u.username}</td>
-              <td><span className={"tag "+(u.role==="manager"?"accent":"brand")}>{roleLabel(u.role)}</span></td>
+              <td>
+                <span className={"tag "+(u.role==="manager"?"accent":"brand")}>{roleLabel(u.role)}</span>
+                {u.role==="teacher" && <span style={{fontSize:11,color:"var(--ink-faint)",marginRight:6}}>{(u.perms||[]).includes("all")?"كل الصلاحيات":`${(u.perms||[]).length} صلاحية`}</span>}
+              </td>
               <td><div style={{display:"flex",gap:6}}>
                 <button className="btn ghost sm" onClick={()=>setModal({mode:"edit",u})}>تعديل</button>
                 {u.id!==me.id && <button className="btn danger sm" onClick={()=>setConfirm({text:`تعطيل حساب «${u.name}»؟ لن يستطيع الدخول بعدها.`,onYes:()=>remove(u)})}>تعطيل</button>}
@@ -1950,28 +2047,44 @@ function CloudAccountForm({mode,u,busy,onClose,onSave}){
   const [name,setName]=useState(u?.name||"");
   const [username,setUsername]=useState(u?.username||"");
   const [password,setPassword]=useState("");
-  const [role,setRole]=useState(u?.role||"deputy");
+  const [role,setRole]=useState(u?.role||"teacher");
+  const [perms,setPerms]=useState(u?.perms||[]);
   const isAdd=mode==="add";
   const valid=name.trim() && (!isAdd || (username.trim() && password.length>=6));
+  const togglePerm=k=>setPerms(p=> k==="all"
+    ? (p.includes("all")?[]:["all"])
+    : (p.includes(k)?p.filter(x=>x!==k):[...p.filter(x=>x!=="all"),k]));
   return (
     <Modal title={isAdd?"حساب جديد":"تعديل الحساب"} onClose={onClose}
-      foot={<><button className="btn" disabled={!valid||busy} onClick={()=>onSave({name,username,password,role})}>{busy?"جارٍ…":"حفظ"}</button>
+      foot={<><button className="btn" disabled={!valid||busy} onClick={()=>onSave({name,username,password,role,perms})}>{busy?"جارٍ…":"حفظ"}</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
       <Field label="الاسم"><input className="input" value={name} onChange={e=>setName(e.target.value)}/></Field>
       {isAdd
         ? <>
             <Field label="اسم المستخدم" hint="يُستخدم للدخول (حروف إنجليزية/أرقام بدون مسافات)">
-              <input className="input" value={username} onChange={e=>setUsername(e.target.value)} placeholder="wakeel2"/></Field>
+              <input className="input" value={username} onChange={e=>setUsername(e.target.value)} placeholder="teacher1"/></Field>
             <Field label="كلمة المرور" hint="6 خانات على الأقل">
               <input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)}/></Field>
           </>
-        : <Field label="اسم المستخدم"><input className="input" value={username} disabled/></Field>}
-      <Field label="الصلاحية" style={{margin:0}}>
+        : <Field label="اسم المستخدم" hint="لتغيير اسم المستخدم أو كلمة المرور: يغيّرها المعلم من «حسابي»">
+            <input className="input" value={username} disabled/></Field>}
+      <Field label="الصلاحية" style={{margin: role==="teacher"?"0 0 4px":"0"}}>
         <select className="input" value={role} onChange={e=>setRole(e.target.value)}>
           <option value="manager">مدير — كامل الصلاحيات</option>
-          <option value="deputy">وكيل</option>
-          <option value="teacher">معلم</option>
+          <option value="deputy">وكيل — كامل الصلاحيات التشغيلية</option>
+          <option value="teacher">معلم — صلاحيات محدّدة</option>
         </select></Field>
+      {role==="teacher" &&
+        <div className="field" style={{margin:0}}>
+          <label>صلاحيات المعلم</label>
+          <div style={{display:"flex",flexWrap:"wrap"}} role="group" aria-label="الصلاحيات">
+            <button type="button" className={"chk"+(perms.includes("all")?" on":"")} aria-pressed={perms.includes("all")} onClick={()=>togglePerm("all")}>كل الصلاحيات</button>
+            {CAPS.map(c=><button type="button" key={c.key} disabled={perms.includes("all")}
+              className={"chk"+((perms.includes("all")||perms.includes(c.key))?" on":"")}
+              aria-pressed={perms.includes("all")||perms.includes(c.key)} onClick={()=>togglePerm(c.key)}>{c.label}</button>)}
+          </div>
+          <div className="hint">حدّد ما يقدر عليه المعلم. تقدر تعدّلها أو تسحبها وقت ما تبي.</div>
+        </div>}
     </Modal>
   );
 }
