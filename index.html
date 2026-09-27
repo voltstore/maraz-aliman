@@ -342,6 +342,23 @@ async function createAuthAccount({username,name,role,password,perms}){
   return uid;
 }
 
+// ينزّل ملف إعداد جاهز لبرنامج الجسر (zk-bridge) — كل القيم مأخوذة من حقول الموقع مباشرة.
+// كلمة المرور تُستخدم هنا فقط لبناء الملف محلياً بالمتصفح ولا تُرسَل ولا تُخزَّن بأي مكان.
+function downloadBridgeConfig({deviceId, deviceIp, devicePort, pollIntervalSeconds, deviceUsername, devicePassword}){
+  const cfg = {
+    deviceId, deviceIp, devicePort: devicePort||4370, pollIntervalSeconds: pollIntervalSeconds||20,
+    deviceUsername, devicePassword,
+    firebaseApiKey: FB.apiKey, firebaseAuthDomain: FB.authDomain, firebaseProjectId: FB.projectId,
+    firestoreLogsCollection: "fingerprint_logs", firestoreStatusCollection: "bridge_status",
+  };
+  const blob = new Blob([JSON.stringify(cfg, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "config.json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
+}
+
 const uid = () => Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-3);
 const todayISO = () => new Date().toISOString().slice(0,10);
 const WEEKDAYS = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
@@ -661,7 +678,7 @@ function Shell({state, commit, user, onLogout, onUserUpdate}){
     </div>
   );
 }
-const roleLabel = r => ({manager:"مدير",deputy:"وكيل",teacher:"معلم"}[r]||r);
+const roleLabel = r => ({manager:"مدير",deputy:"وكيل",teacher:"معلم",device:"جهاز بصمة"}[r]||r);
 
 /* ---- الصلاحيات ---- */
 const CAPS=[
@@ -1092,9 +1109,11 @@ function FingerprintLog({state, commit, user}){
   const toast=useToast();
   const [logs,setLogs]=useState([]);
   const [devices,setDevices]=useState([]);
+  const [configs,setConfigs]=useState([]);
   const [loading,setLoading]=useState(true);
   const [q,setQ]=useState("");
   const [date,setDate]=useState(todayISO());
+  const [wizardOpen,setWizardOpen]=useState(false);
   const autoAtt = !!(state.meta && state.meta.fingerprintAutoAttendance);
 
   useEffect(()=>{
@@ -1107,8 +1126,12 @@ function FingerprintLog({state, commit, user}){
     const unsub2 = fdb.collection("bridge_status").onSnapshot(snap=>{
       setDevices(snap.docs.map(d=>({id:d.id, ...d.data()})));
     }, err=>console.warn(err));
-    return ()=>{ unsub(); unsub2(); };
+    const unsub3 = fdb.collection("bridge_config").onSnapshot(snap=>{
+      setConfigs(snap.docs.map(d=>({id:d.id, ...d.data()})));
+    }, err=>console.warn(err));
+    return ()=>{ unsub(); unsub2(); unsub3(); };
   },[]);
+  useEffect(()=>{ if(FIREBASE_READY && !loading && !configs.length) setWizardOpen(true); },[loading, configs.length]);
 
   // فهرسة أسماء الطلاب والمعلمين لمطابقتها تلقائياً باسم البصمة
   const studentByName = useMemo(()=>{
@@ -1183,7 +1206,10 @@ function FingerprintLog({state, commit, user}){
     <div className="rise">
       <div className="section-head">
         <div><h2>سجل البصمة</h2><p>كل بصمة تُسجَّل تلقائياً من جهاز البصمة (ZK) بالاسم والتاريخ والوقت للثانية، فور حدوثها.</p></div>
+        <button className="btn" onClick={()=>setWizardOpen(v=>!v)}>{wizardOpen?"إخفاء معالج الربط":(configs.length?"⚙ إدارة أجهزة البصمة":"➕ ربط جهاز بصمة جديد")}</button>
       </div>
+
+      {wizardOpen && <DeviceWizard configs={configs} devices={devices} user={user} toast={toast}/>}
 
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",marginBottom:16}}>
         <Stat k="أجهزة متصلة الآن" v={onlineDevices.length+" / "+devices.length} glyph="◆" foot={devices.length?devices.map(d=>d.id).join("، "):"لا يوجد جهاز مُعرَّف بعد"}/>
@@ -1191,7 +1217,7 @@ function FingerprintLog({state, commit, user}){
         <Stat k="إجمالي السجلات المعروضة" v={logs.length} glyph="▦" foot="آخر 1000 سجل"/>
       </div>
 
-      {!devices.length && <div className="banner warn">⚠ ما وصل أي بصمة بعد. تأكد إن برنامج الجسر (zk-bridge) شغّال على جهاز متصل بنفس شبكة جهاز البصمة. راجع دليل التشغيل داخل مجلد zk-bridge.</div>}
+      {!devices.length && !wizardOpen && <div className="banner warn">⚠ ما وصل أي بصمة بعد. اضغط «➕ ربط جهاز بصمة جديد» أعلاه وتابع الخطوات.</div>}
 
       <div className="card pad" style={{marginBottom:16,display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end"}}>
         <Field label="بحث بالاسم" style={{margin:0,minWidth:200}}>
@@ -1229,6 +1255,161 @@ function FingerprintLog({state, commit, user}){
             ))}
           </tbody>
         </table></div>}
+    </div>
+  );
+}
+
+/* ------ معالج ربط جهاز بصمة جديد (كل الإعداد من الموقع — بدون تعديل ملفات يدوياً) ------ */
+function DeviceWizard({configs, devices, user, toast}){
+  const [editingId,setEditingId]=useState(null); // null = نموذج جهاز جديد
+  const [deviceId,setDeviceId]=useState("");
+  const [ip,setIp]=useState("");
+  const [port,setPort]=useState(4370);
+  const [poll,setPoll]=useState(20);
+  const [username,setUsername]=useState("");
+  const [password,setPassword]=useState("");
+  const [createAccount,setCreateAccount]=useState(true);
+  const [testing,setTesting]=useState(false);
+  const [testResult,setTestResult]=useState(null); // null | "ok" | "fail"
+  const [busy,setBusy]=useState(false);
+
+  const resetForm = ()=>{
+    setEditingId(null); setDeviceId(""); setIp(""); setPort(4370); setPoll(20);
+    setUsername(""); setPassword(""); setCreateAccount(true); setTestResult(null);
+  };
+  const startEdit = cfg => {
+    setEditingId(cfg.id); setDeviceId(cfg.id); setIp(cfg.deviceIp||"");
+    setPort(cfg.devicePort||4370); setPoll(cfg.pollIntervalSeconds||20);
+    setUsername(cfg.deviceUsername||""); setPassword(""); setCreateAccount(false); setTestResult(null);
+  };
+
+  const testLogin = async ()=>{
+    if(!username.trim() || password.length<6){ toast("أدخل اسم المستخدم وكلمة المرور أولاً (6 خانات فأكثر)","err"); return; }
+    setTesting(true); setTestResult(null);
+    try{
+      const res = await fetch("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key="+FB.apiKey, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({email:userToEmail(username.trim()), password, returnSecureToken:true})
+      });
+      const data = await res.json();
+      if(!res.ok) throw new Error((data.error&&data.error.message)||"فشل");
+      setTestResult("ok"); toast("الحساب يعمل ✓ تقدر تكمّل");
+    }catch(e){
+      setTestResult("fail");
+      toast(createAccount ? "تنبيه: هذا اسم المستخدم مو موجود بعد — طبيعي إذا بتنشئه الحين" : "فشل تسجيل الدخول — تأكد من اسم المستخدم وكلمة المرور","err");
+    }finally{ setTesting(false); }
+  };
+
+  const submit = async ()=>{
+    const id = deviceId.trim();
+    if(!id){ toast("اكتب اسماً مميّزاً للجهاز (مثال: بصمة-المدخل)","err"); return; }
+    if(!ip.trim()){ toast("اكتب عنوان IP الخاص بجهاز البصمة","err"); return; }
+    if(!username.trim() || password.length<6){ toast("اسم مستخدم وكلمة مرور (6 خانات فأكثر) لحساب الجهاز مطلوبة","err"); return; }
+    setBusy(true);
+    try{
+      if(createAccount){
+        await createAuthAccount({username:username.trim(), name:"جهاز بصمة — "+id, role:"device", password});
+      }
+      await fdb.collection("bridge_config").doc(id).set({
+        deviceId:id, deviceIp:ip.trim(), devicePort:+port||4370, pollIntervalSeconds:+poll||20,
+        deviceUsername:username.trim().toLowerCase(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(), updatedBy:user.name,
+      }, {merge:true});
+      downloadBridgeConfig({
+        deviceId:id, deviceIp:ip.trim(), devicePort:+port||4370, pollIntervalSeconds:+poll||20,
+        deviceUsername:username.trim().toLowerCase(), devicePassword:password,
+      });
+      toast("تم الحفظ، وبدأ تنزيل ملف التشغيل (config.json)");
+      resetForm();
+    }catch(ex){
+      const c=(ex&&ex.code)||"";
+      toast(c.includes("email-already-in-use")?"اسم المستخدم مستخدم مسبقاً — جرّب اسماً ثانياً أو أطفئ «إنشاء حساب جديد»"
+           :c.includes("weak-password")?"كلمة المرور ضعيفة (6 خانات على الأقل)"
+           :"تعذّر الحفظ: "+(ex.message||c), "err");
+    }finally{ setBusy(false); }
+  };
+
+  const removeConfig = async cfg=>{
+    try{ await fdb.collection("bridge_config").doc(cfg.id).delete(); toast("تم حذف إعداد الجهاز من القائمة","err"); if(editingId===cfg.id) resetForm(); }
+    catch(e){ toast("تعذّر الحذف","err"); }
+  };
+
+  return (
+    <div className="card pad" style={{marginBottom:16}}>
+      <h3 style={{marginTop:0}}>ربط جهاز بصمة — خطوة بخطوة</h3>
+      <ol style={{lineHeight:1.9,paddingRight:20,fontSize:14,marginTop:8}}>
+        <li>من قائمة جهاز البصمة نفسه: <b>Menu ← Comm. (الاتصال) ← Ethernet</b> — دوّن عنوان الـ IP الظاهر.</li>
+        <li>تأكد إن الكمبيوتر اللي راح يشغّل برنامج الربط متصل بنفس شبكة المدرسة (نفس الراوتر).</li>
+        <li>عبّي الحقول تحت، واضغط <b>اختبار الحساب</b> للتأكد قبل الحفظ (اختياري لكن مفيد).</li>
+        <li>اضغط <b>حفظ وتنزيل ملف التشغيل</b> — ينزّل ملف <code>config.json</code> جاهز فيه كل البيانات.</li>
+        <li>نزّل برنامج الربط (مرة واحدة فقط) من <a href="https://github.com/voltstore/maraz-aliman/archive/refs/heads/main.zip" target="_blank" rel="noreferrer">هنا (تنزيل ZIP)</a>، فُكّ الضغط، وادخل مجلد <code>zk-bridge</code> بالداخل.</li>
+        <li>انسخ ملف <code>config.json</code> اللي نزّلته بالخطوة 4 إلى داخل مجلد <code>zk-bridge</code> نفسه (استبدل أي ملف موجود بنفس الاسم).</li>
+        <li>اضغط مرتين على <code>INSTALL.bat</code> (أول مرة فقط، يحتاج إنترنت)، وبعدها اضغط مرتين على <code>START.bat</code> واتركه شغّال طول الدوام.</li>
+      </ol>
+
+      {configs.length>0 && <>
+        <h4 style={{margin:"18px 0 8px"}}>الأجهزة المُعدّة حالياً</h4>
+        <div className="card" style={{marginBottom:18}}><table className="tbl">
+          <thead><tr><th>الجهاز</th><th>IP</th><th>حساب الجسر</th><th>الحالة</th><th style={{width:1}}></th></tr></thead>
+          <tbody>{configs.map(cfg=>{
+            const st = devices.find(d=>d.id===cfg.id);
+            const online = !!(st && st.lastSeen && st.lastSeen.toDate && (Date.now()-st.lastSeen.toDate().getTime())<60000);
+            return <tr key={cfg.id}>
+              <td style={{fontWeight:600}}>{cfg.id}</td>
+              <td>{cfg.deviceIp}:{cfg.devicePort||4370}</td>
+              <td style={{color:"var(--ink-soft)"}}>{cfg.deviceUsername}</td>
+              <td><span className={"live-dot "+(online?"on":"off")}/>{online?"متصل الآن":"غير متصل"}</td>
+              <td><div style={{display:"flex",gap:6}}>
+                <button className="btn ghost sm" onClick={()=>startEdit(cfg)}>تعديل / إعادة تنزيل</button>
+                <button className="btn danger sm" onClick={()=>removeConfig(cfg)}>حذف</button>
+              </div></td>
+            </tr>; })}</tbody>
+        </table></div>
+      </>}
+
+      <h4 style={{margin:"6px 0 10px"}}>{editingId ? `تعديل الجهاز: ${editingId}` : "إضافة جهاز جديد"}</h4>
+      <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+        <Field label="اسم الجهاز" hint="اسم مميّز يظهر بالقوائم (بدون مسافات يفضّل)" style={{minWidth:200,flex:1}}>
+          <input className="input" value={deviceId} disabled={!!editingId} onChange={e=>setDeviceId(e.target.value)} placeholder="بصمة-المدخل-الرئيسي"/>
+        </Field>
+        <Field label="عنوان IP الجهاز" style={{minWidth:180}}>
+          <input className="input" value={ip} onChange={e=>setIp(e.target.value)} placeholder="192.168.1.201"/>
+        </Field>
+        <Field label="المنفذ (Port)" style={{minWidth:120}}>
+          <input className="input" type="number" value={port} onChange={e=>setPort(e.target.value)}/>
+        </Field>
+        <Field label="فاصل السحب (ثانية)" hint="20 مناسب لأغلب الحالات" style={{minWidth:150}}>
+          <input className="input" type="number" value={poll} onChange={e=>setPoll(e.target.value)}/>
+        </Field>
+      </div>
+
+      <div style={{display:"flex",gap:14,flexWrap:"wrap",marginTop:4}}>
+        <Field label="اسم مستخدم حساب الجهاز" hint="سيُستخدم برنامج الجسر به للدخول — بصلاحية محدودة (بصمات فقط)" style={{minWidth:200,flex:1}}>
+          <input className="input" value={username} disabled={!!editingId} onChange={e=>setUsername(e.target.value)} placeholder="zk-entrance"/>
+        </Field>
+        <Field label={editingId?"كلمة المرور (لإعادة توليد الملف فقط)":"كلمة مرور الحساب"} hint="6 خانات على الأقل — لا تُخزَّن أبداً" style={{minWidth:200,flex:1}}>
+          <input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)}/>
+        </Field>
+      </div>
+
+      {!editingId && <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13.5,margin:"10px 0"}}>
+        <input type="checkbox" checked={createAccount} onChange={e=>setCreateAccount(e.target.checked)}/>
+        إنشاء حساب جهاز جديد بهذا الاسم وكلمة المرور (أطفئها لو الحساب موجود مسبقاً من صفحة الحسابات)
+      </label>}
+
+      <div style={{display:"flex",gap:10,marginTop:14,flexWrap:"wrap",alignItems:"center"}}>
+        <button className="btn ghost" disabled={testing} onClick={testLogin}>{testing?"جارٍ الاختبار…":"اختبار الحساب"}</button>
+        {testResult==="ok" && <span className="pill present">✓ الحساب صالح</span>}
+        {testResult==="fail" && <span className="pill absent">✕ فشل</span>}
+        <div style={{marginRight:"auto",display:"flex",gap:10}}>
+          {editingId
+            ? <>
+                <button className="btn" disabled={busy} onClick={submit}>{busy?"جارٍ الحفظ…":"حفظ التعديلات وتنزيل الملف"}</button>
+                <button className="btn ghost" onClick={resetForm}>إلغاء</button>
+              </>
+            : <button className="btn" disabled={busy} onClick={submit}>{busy?"جارٍ الحفظ…":"حفظ وتنزيل ملف التشغيل"}</button>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2230,6 +2411,7 @@ function CloudAccountForm({mode,u,busy,onClose,onSave}){
           <option value="manager">مدير — كامل الصلاحيات</option>
           <option value="deputy">وكيل — كامل الصلاحيات التشغيلية</option>
           <option value="teacher">معلم — صلاحيات محدّدة</option>
+          <option value="device">جهاز بصمة — كتابة سجلات البصمة فقط (لبرنامج الجسر)</option>
         </select></Field>
       {role==="teacher" &&
         <div className="field" style={{margin:0}}>
@@ -2318,7 +2500,11 @@ function App(){
       if(!fbUser){ setUser(null); setAuthReady(true); return; }
       try{
         const doc=await fdb.collection(USERS_COL).doc(fbUser.uid).get();
-        if(doc.exists){ setUser({id:fbUser.uid, ...doc.data()}); }
+        if(doc.exists && doc.data().role==="device"){
+          setAuthErr("هذا حساب جهاز بصمة (صلاحية محدودة لبرنامج الجسر فقط) — لا يُستخدم للدخول من المتصفح.");
+          await fauth.signOut(); setUser(null);
+        }
+        else if(doc.exists){ setUser({id:fbUser.uid, ...doc.data()}); }
         else { setAuthErr("تم الدخول لكن لا يوجد ملف صلاحيات لحسابك. راجع المدير."); await fauth.signOut(); setUser(null); }
       }catch(e){ setAuthErr("تعذّر تحميل الصلاحيات. تأكد من قواعد الأمان في Firestore."); try{await fauth.signOut();}catch(_){} setUser(null); }
       setAuthReady(true);

@@ -17,16 +17,27 @@ service cloud.firestore {
     function isStaff() {
       return hasProfile() && (profile().role == 'manager' || profile().role == 'deputy' || profile().role == 'teacher');
     }
+    // مدير أو وكيل: هم من يديرون ربط أجهزة البصمة (المعلم لا يرى هذه الصفحة أصلاً)
+    function isOps() {
+      return hasProfile() && (profile().role == 'manager' || profile().role == 'deputy');
+    }
+    // حساب جهاز بصمة: صلاحية محدودة جداً، ينشئه المدير/الوكيل من معالج الربط بالموقع،
+    // ويستخدمه برنامج الجسر (zk-bridge) فقط للكتابة في سجلات البصمة ونبضة الحالة.
+    function isDevice() {
+      return hasProfile() && profile().role == 'device';
+    }
 
     // ملفات الصلاحيات: يقرؤها أي مسجّل دخول
-    // المدير: كامل التحكم. المستخدم: يعدّل ملفه الخاص فقط بدون تغيير صلاحيته أو اسم مستخدمه
+    // المدير: كامل التحكم. الوكيل: يقدر ينشئ/يحذف حسابات "جهاز بصمة" فقط (لمعالج الربط).
+    // المستخدم: يعدّل ملفه الخاص فقط بدون تغيير صلاحيته أو اسم مستخدمه
     match /maraz_users/{uid} {
-      allow read:            if signedIn();
-      allow create, delete:  if isManager();
-      allow update:          if isManager()
-                             || (request.auth.uid == uid
-                                 && request.resource.data.role == resource.data.role
-                                 && request.resource.data.username == resource.data.username);
+      allow read:   if signedIn();
+      allow create: if isManager() || (isOps() && request.resource.data.role == 'device');
+      allow delete: if isManager() || (isOps() && resource.data.role == 'device');
+      allow update: if isManager()
+                    || (request.auth.uid == uid
+                        && request.resource.data.role == resource.data.role
+                        && request.resource.data.username == resource.data.username);
     }
 
     // بيانات المدرسة (طلاب، حضور، لجان...): للكادر المصرّح فقط
@@ -35,19 +46,26 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
-    // سجلات جهاز البصمة: يكتبها فقط برنامج الجسر (zk-bridge) عبر Firebase Admin SDK
-    // (يتجاوز هذه القواعد بمفتاح خدمة)، والكادر يقرأ فقط من المنصة. لا كتابة من المتصفح إطلاقاً.
+    // سجلات جهاز البصمة: يكتبها فقط حساب "جهاز بصمة" (برنامج الجسر). الكادر يقرأ فقط،
+    // ويقدر يبدّل حقلي applied/appliedAt عند الربط التلقائي بالحضور — لا شيء غير ذلك.
     match /fingerprint_logs/{logId} {
-      allow read:  if isStaff();
-      allow update: if isStaff()
-                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['applied','appliedAt']);
-      allow create, delete: if false;
+      allow read:          if isStaff();
+      allow create, update: if isDevice()
+                            || (isStaff()
+                                && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['applied','appliedAt']));
+      allow delete: if false;
     }
 
     // حالة اتصال جهاز/أجهزة البصمة (نبضة حياة من الجسر)
     match /bridge_status/{deviceId} {
       allow read:  if isStaff();
-      allow write: if false;
+      allow write: if isDevice();
+    }
+
+    // إعدادات ربط الأجهزة (IP، اسم المستخدم، فاصل السحب...) — بدون أي كلمات مرور هنا إطلاقاً.
+    // يديرها المدير/الوكيل فقط من معالج الربط بالموقع.
+    match /bridge_config/{deviceId} {
+      allow read, write: if isOps();
     }
 
     // امنع أي شيء آخر

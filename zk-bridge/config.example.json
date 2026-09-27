@@ -1,10 +1,15 @@
 {
+  "_ملاحظة": "هذا مثال فقط. الطريقة الموصى بها: افتح صفحة «سجل البصمة» بالموقع → معالج الربط → عبّي الحقول → زر «حفظ وتنزيل ملف التشغيل» — بينزّل لك config.json جاهز بكل القيم الصحيحة تلقائياً (بدون ما تعبّي أي شي هنا يدوياً).",
   "deviceId": "بصمة-المدخل-الرئيسي",
   "deviceIp": "192.168.1.201",
   "devicePort": 4370,
   "pollIntervalSeconds": 20,
   "usersRefreshMinutes": 15,
-  "serviceAccountPath": "./serviceAccountKey.json",
+  "deviceUsername": "zk-entrance",
+  "devicePassword": "ضعها هنا فقط إذا تعبّي الملف يدوياً",
+  "firebaseApiKey": "AIzaSyAC9BzBpw66oBDriZoi9A5zsThKLFZiNv8",
+  "firebaseAuthDomain": "imam-warsh.firebaseapp.com",
+  "firebaseProjectId": "imam-warsh",
   "firestoreLogsCollection": "fingerprint_logs",
   "firestoreStatusCollection": "bridge_status"
 }

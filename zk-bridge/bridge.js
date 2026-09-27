@@ -2,30 +2,35 @@
  * جسر البصمة — منصة ثانوية مارز الإيمان
  * ------------------------------------------------
  * يتصل بجهاز بصمة ZKTeco عبر الشبكة المحلية (LAN)، يقرأ سجلات الحضور لحظياً
- * (وأسماء المستخدمين المسجَّلة على الجهاز نفسه)، ويرفعها فوراً إلى Firestore
- * في مجموعة منفصلة "fingerprint_logs" — بمعزل تام عن مستند بيانات المنصة
- * الرئيسي، حتى ما يصير أي تعارض كتابة مع المنصة وقت فتح أحد المستخدمين لها.
+ * (وأسماء المستخدمين المسجَّلة على الجهاز نفسه)، ويرفعها فوراً إلى قاعدة بيانات
+ * المنصة (Firestore) — في مجموعة منفصلة "fingerprint_logs" بمعزل تام عن بيانات
+ * المنصة الرئيسية، حتى ما يصير أي تعارض كتابة وقت فتح أحد المستخدمين للمنصة.
+ *
+ * كل الإعداد (IP الجهاز، حساب الدخول، ...) يأتي من ملف config.json الذي يُنزَّل
+ * جاهزاً من صفحة "سجل البصمة" بالموقع نفسه (معالج الربط) — بدون أي حاجة لتعديل
+ * أي شيء يدوياً هنا، ولا لأي مفتاح Firebase سرّي (Service Account). الحساب
+ * المستخدم هنا محدود الصلاحية: يقدر فقط يكتب سجلات البصمة ونبضة الحالة، ولا يقدر
+ * يقرأ أو يعدّل أي بيانات أخرى بالمنصة (طلاب، حضور، حسابات...).
  *
  * يمكن تشغيل هذا الملف من أي جهاز كمبيوتر متصل بنفس شبكة جهاز البصمة —
- * لا يشترط جهازاً معيّناً؛ شغّله من أي جهاز مناسب في أي وقت (راجع README.md).
+ * لا يشترط جهازاً معيّناً؛ شغّله من أي جهاز مناسب في أي وقت.
  *
- * ⚠️ ملاحظة مهمة: أسماء الحقول التي تُرجعها مكتبة node-zklib قد تختلف قليلاً
- * حسب موديل الجهاز وإصدار المكتبة. الكود هنا يحاول عدّة أسماء شائعة تلقائياً
- * (دالة normalizeAttendance)، ويطبع السجل الخام في الكونسول أول مرة — لو
- * ظهرت الأسماء/الأوقات فاضية بعد أول تشغيل حقيقي، راجع الطباعة الخام
- * [raw log] وعدّل normalizeAttendance بحسب الحقول الظاهرة فعلياً.
+ * ⚠️ ملاحظة: أسماء الحقول التي تُرجعها مكتبة node-zklib قد تختلف قليلاً حسب موديل
+ * الجهاز. الكود هنا يحاول عدّة أسماء شائعة تلقائياً (normalizeAttendance)، ويطبع
+ * السجل الخام بالكونسول عند الحاجة — لو ظهرت الأسماء/الأوقات فاضية بعد أول تشغيل
+ * حقيقي، راجع الطباعة [raw log] وعدّل الدالة بحسب الحقول الظاهرة فعلياً.
  */
 
 const fs = require("fs");
 const path = require("path");
 const ZKLib = require("node-zklib");
-const admin = require("firebase-admin");
 
 /* ---------------------------------------------------------------- إعداد */
 const CONFIG_PATH = path.join(__dirname, "config.json");
 if (!fs.existsSync(CONFIG_PATH)) {
-  console.error("❌ لا يوجد ملف config.json.");
-  console.error("   انسخ config.example.json وأعد تسميته إلى config.json، ثم عدّل القيم بداخله.");
+  console.error("❌ لا يوجد ملف config.json بجانب هذا الملف.");
+  console.error("   افتح صفحة «سجل البصمة» بالموقع → معالج الربط → عبّي الحقول → حفظ وتنزيل");
+  console.error("   ملف التشغيل، ثم انسخ config.json المُنزَّل هنا.");
   process.exit(1);
 }
 const CFG = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
@@ -33,26 +38,22 @@ const CFG = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
 const DEVICE_ID = CFG.deviceId || "بصمة-غير-مسماة";
 const DEVICE_IP = CFG.deviceIp;
 const DEVICE_PORT = CFG.devicePort || 4370;
-const POLL_MS = (CFG.pollIntervalSeconds || 5) * 1000;
+const POLL_MS = (CFG.pollIntervalSeconds || 20) * 1000;
 const USERS_REFRESH_MS = (CFG.usersRefreshMinutes || 15) * 60 * 1000;
 const LOGS_COL = CFG.firestoreLogsCollection || "fingerprint_logs";
 const STATUS_COL = CFG.firestoreStatusCollection || "bridge_status";
-const SA_PATH = path.join(__dirname, CFG.serviceAccountPath || "./serviceAccountKey.json");
 
-if (!DEVICE_IP) {
-  console.error("❌ حدّد deviceIp في config.json (عنوان IP الخاص بجهاز البصمة).");
-  process.exit(1);
-}
-if (!fs.existsSync(SA_PATH)) {
-  console.error("❌ ملف مفتاح خدمة Firebase غير موجود: " + SA_PATH);
-  console.error("   حمّله من Firebase Console → إعدادات المشروع → حسابات الخدمة → إنشاء مفتاح خاص جديد.");
-  console.error("   راجع README.md لمزيد من التفاصيل.");
-  process.exit(1);
-}
+const API_KEY = CFG.firebaseApiKey;
+const PROJECT_ID = CFG.firebaseProjectId;
+const DEVICE_USERNAME = CFG.deviceUsername;
+const DEVICE_PASSWORD = CFG.devicePassword;
+const AUTH_EMAIL = (DEVICE_USERNAME || "").includes("@") ? DEVICE_USERNAME : DEVICE_USERNAME + "@maraz-aliman.app";
 
-/* -------------------------------------------------------- Firebase Admin */
-admin.initializeApp({ credential: admin.credential.cert(require(SA_PATH)) });
-const db = admin.firestore();
+if (!DEVICE_IP) { console.error("❌ deviceIp مفقود بملف config.json."); process.exit(1); }
+if (!API_KEY || !PROJECT_ID) { console.error("❌ إعدادات Firebase مفقودة بملف config.json (نزّل الملف من الموقع مرة ثانية)."); process.exit(1); }
+if (!DEVICE_USERNAME || !DEVICE_PASSWORD) { console.error("❌ بيانات حساب الجهاز مفقودة بملف config.json."); process.exit(1); }
+
+const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
 /* -------------------------------------------------------------- طباعة */
 const ts = () => new Date().toLocaleString("ar-SA-u-nu-latn");
@@ -60,13 +61,88 @@ const log = (...a) => console.log(`[${ts()}]`, ...a);
 const warn = (...a) => console.warn(`[${ts()}] ⚠`, ...a);
 const err = (...a) => console.error(`[${ts()}] ❌`, ...a);
 
+/* -------------------------------------------------- تسجيل الدخول (Firebase Auth REST) */
+let authState = { idToken: null, refreshToken: null, expiresAt: 0 };
+
+async function signIn() {
+  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: AUTH_EMAIL, password: DEVICE_PASSWORD, returnSecureToken: true }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error("فشل تسجيل دخول حساب الجهاز: " + (data.error && data.error.message));
+  authState = {
+    idToken: data.idToken,
+    refreshToken: data.refreshToken,
+    expiresAt: Date.now() + (+data.expiresIn || 3600) * 1000 - 60000, // هامش دقيقة قبل الانتهاء
+  };
+}
+
+async function refreshAuth() {
+  const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: authState.refreshToken }),
+  });
+  const data = await res.json();
+  if (!res.ok) { await signIn(); return; } // تعذّر التجديد؟ سجّل دخول من جديد
+  authState = {
+    idToken: data.id_token,
+    refreshToken: data.refresh_token,
+    expiresAt: Date.now() + (+data.expires_in || 3600) * 1000 - 60000,
+  };
+}
+
+async function ensureAuth() {
+  if (!authState.idToken) { await signIn(); return; }
+  if (Date.now() >= authState.expiresAt) { await refreshAuth(); }
+}
+
+/* -------------------------------------------------------- Firestore REST */
+function toFirestoreValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (v instanceof Date) return { timestampValue: v.toISOString() };
+  if (typeof v === "boolean") return { booleanValue: v };
+  if (typeof v === "number") return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  return { stringValue: String(v) };
+}
+
+// يكتب/يحدّث مستند بمعرّف ثابت (upsert) — يعدّل فقط الحقول المُرسَلة (شبيه بـ set(merge:true))
+async function firestoreUpsert(collection, docId, fields) {
+  await ensureAuth();
+  const keys = Object.keys(fields);
+  const mask = keys.map(k => "updateMask.fieldPaths=" + encodeURIComponent(k)).join("&");
+  const url = `${FIRESTORE_BASE}/${collection}/${encodeURIComponent(docId)}?${mask}`;
+  const body = { fields: {} };
+  keys.forEach(k => { body.fields[k] = toFirestoreValue(fields[k]); });
+
+  let res = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + authState.idToken },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { // انتهت الجلسة أثناء الاستخدام — جدّدها وحاول مرة وحدة إضافية
+    await refreshAuth();
+    res = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + authState.idToken },
+      body: JSON.stringify(body),
+    });
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(`Firestore ${res.status}: ` + ((data.error && data.error.message) || res.statusText));
+  }
+}
+
 /* --------------------------------------------------------- حالة داخلية */
 let usersMap = new Map(); // deviceUserId -> name
 let zk = null;
 let connected = false;
 let lastLogAt = null;
 
-/* --------------------------------------------------- توحيد شكل السجلات */
+/* --------------------------------------------------------- توحيد شكل السجلات */
 // يحاول التعامل مع اختلاف أسماء الحقول بين إصدارات مكتبة node-zklib
 function normalizeAttendance(rec) {
   const userId =
@@ -80,47 +156,43 @@ function normalizeAttendance(rec) {
   return { userId: userId != null ? String(userId) : null, time: d, raw: rec };
 }
 
-/* --------------------------------------------------------- Firestore IO */
 function docIdFor(userId, time) {
   const safeUser = (userId || "unknown").toString().replace(/[^\w-]/g, "_");
   return `${DEVICE_ID}_${safeUser}_${time.getTime()}`.replace(/[^\w-]/g, "_");
 }
 
-async function pushAttendance(userId, time, extra) {
-  const name = usersMap.get(userId) || extra?.name || "غير معروف (" + userId + ")";
+async function pushAttendance(userId, time) {
+  const name = usersMap.get(userId) || "غير معروف (" + userId + ")";
   const id = docIdFor(userId, time);
-  const dateKey = time.toISOString().slice(0, 10); // YYYY-MM-DD (بحسب توقيت الجهاز المُخزَّن)
-  await db.collection(LOGS_COL).doc(id).set(
-    {
+  const dateKey = time.toISOString().slice(0, 10); // YYYY-MM-DD — بنفس منطق todayISO() بالموقع
+  try {
+    await firestoreUpsert(LOGS_COL, id, {
       deviceId: DEVICE_ID,
       deviceUserId: userId,
       name,
-      time: admin.firestore.Timestamp.fromDate(time),
+      time,
       timeISO: time.toISOString(),
       dateKey,
       timeStr: time.toTimeString().slice(0, 8),
-      receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-      applied: false,
-    },
-    { merge: true } // set بدل add + merge => إعادة نفس البصمة لا تكرّر ولا تفسد applied
-  );
-  lastLogAt = time;
-  log(`✓ بصمة: ${name} (${userId}) — ${time.toLocaleTimeString("ar-SA-u-nu-latn")}`);
+      receivedAt: new Date(),
+    });
+    lastLogAt = time;
+    log(`✓ بصمة: ${name} (${userId}) — ${time.toLocaleTimeString("ar-SA-u-nu-latn")}`);
+  } catch (e) {
+    err("فشل رفع بصمة:", e.message);
+  }
 }
 
 async function pushHeartbeat(extra) {
   try {
-    await db.collection(STATUS_COL).doc(DEVICE_ID).set(
-      {
-        deviceId: DEVICE_ID,
-        deviceIp: DEVICE_IP,
-        online: !!connected,
-        lastSeen: admin.firestore.FieldValue.serverTimestamp(),
-        lastLogAt: lastLogAt ? admin.firestore.Timestamp.fromDate(lastLogAt) : null,
-        ...extra,
-      },
-      { merge: true }
-    );
+    await firestoreUpsert(STATUS_COL, DEVICE_ID, {
+      deviceId: DEVICE_ID,
+      deviceIp: DEVICE_IP,
+      online: !!connected,
+      lastSeen: new Date(),
+      lastLogAt: lastLogAt || null,
+      ...extra,
+    });
   } catch (e) {
     warn("تعذّر إرسال نبضة الحالة:", e.message);
   }
@@ -142,16 +214,16 @@ async function refreshUsers() {
   }
 }
 
-// خزّن كل بصمة سبق معالجتها (منذ إقلاع هذه الجلسة) لتفادي طباعة/كتابة مكررة.
-// (Firestore نفسه محمي أصلاً من التكرار عبر docIdFor + set/merge، فهذا احتياط إضافي فقط)
+// خزّن كل بصمة سبق معالجتها (منذ إقلاع هذه الجلسة) لتفادي كتابة مكررة لنفس الدورة.
+// (Firestore نفسه محمي أصلاً من التكرار عبر docIdFor + upsert، فهذا احتياط إضافي فقط)
 const seen = new Set();
 let pollBusy = false;
 
 // ⚠️ مكتبة node-zklib لا تدعم فلترة السجلات — getAttendances() تُرجع كامل سجل
 // الجهاز في كل استدعاء (لا يوجد "سجلات جديدة فقط"). لذلك أول تشغيل للجسر قد يرفع
 // كل التاريخ المخزَّن بالجهاز دفعة واحدة (نتيجة مفيدة عملياً: نسخة احتياطية كاملة)،
-// وبعدها تُتجاهل السجلات المكررة تلقائياً (seen + معرّف Firestore الثابت). لهذا
-// السبب لا يُفضَّل تقليل pollIntervalSeconds كثيراً على أجهزة فيها سجل ضخم.
+// وبعدها تُتجاهل السجلات المكررة تلقائياً. لهذا السبب لا يُفضَّل تقليل
+// pollIntervalSeconds كثيراً على أجهزة فيها سجل ضخم.
 async function pollAttendanceOnce() {
   if (pollBusy) return; // لا تبدأ دورة سحب جديدة قبل انتهاء السابقة
   pollBusy = true;
@@ -190,7 +262,7 @@ async function connectDevice() {
       const key = userId + "_" + time.getTime();
       if (seen.has(key)) return;
       seen.add(key);
-      pushAttendance(userId, time).catch((e) => err("فشل رفع بصمة لحظية:", e.message));
+      pushAttendance(userId, time);
     });
     log("📡 وضع الاستماع اللحظي مفعّل (كل بصمة تُرفع فوراً).");
   } catch (e) {
@@ -207,6 +279,9 @@ async function disconnectDevice() {
 let stopping = false;
 
 async function mainLoop() {
+  try { await ensureAuth(); log("🔑 تم تسجيل دخول حساب الجهاز بنجاح."); }
+  catch (e) { err("فشل تسجيل الدخول:", e.message, "— تأكد من اسم المستخدم/كلمة المرور بملف config.json."); process.exit(1); }
+
   while (!stopping) {
     if (!connected) {
       try {
@@ -238,7 +313,7 @@ setInterval(() => { if (connected) refreshUsers(); }, USERS_REFRESH_MS);
 /* -------------------------------------------------------------- الإقلاع */
 console.log("================================================================");
 console.log(" جسر البصمة — منصة ثانوية مارز الإيمان");
-console.log(` الجهاز: ${DEVICE_ID}  |  IP: ${DEVICE_IP}:${DEVICE_PORT}`);
+console.log(` الجهاز: ${DEVICE_ID}  |  IP: ${DEVICE_IP}:${DEVICE_PORT}  |  الحساب: ${DEVICE_USERNAME}`);
 console.log("================================================================");
 
 mainLoop();
