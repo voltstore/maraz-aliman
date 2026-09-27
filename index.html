@@ -404,7 +404,8 @@ const DEFAULT_STATE = {
   attMeta:{},           // { 'YYYY-MM-DD': { studentId: ISOدateTime لوقت التسجيل } }
   records:[],           // [ {id, studentId, kind:'note'|'incident', date, at, by, byName, text, severity} ]
   examSchedules:{},      // { sectionNumber: [ {id,date,subject,time} ] }
-  committees:[],         // [ {id,number,subject,date,venue,sectionA,sectionB,studentIds:[],approved} ]
+  // [ {id, number, date, venue, entries:[{section,subject}], studentIds:[], seating:[{studentId,section,seat:'A'|'B',table}], approved, auto} ]
+  committees:[],
 };
 const nowISO = () => new Date().toISOString();
 const fmtTime = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit"}).format(new Date(iso)); }catch(e){ return ""; } };
@@ -460,6 +461,45 @@ const gradeForSection = (sec, grades) =>
   grades.find(g => sec>=g.from && sec<=g.to) || null;
 const gradeName = (sec, grades) => (gradeForSection(sec,grades)||{}).name || "غير مصنّف";
 const sectionsRange = count => Array.from({length:count},(_,i)=>i+1);
+const MOE_LOGO_URL = (()=>{ try{ return new URL("assets/moe-logo.svg", document.baseURI).href; }catch(e){ return "assets/moe-logo.svg"; } })();
+
+const shuffleArr = arr => {
+  const a = arr.slice();
+  for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+};
+
+// يوزّع الطلاب على مقاعد A/B (طاولات ثنائية) بحيث يتجنّب — قدر الإمكان — وضع طالبين
+// من نفس الصف بجانب بعض على نفس الطاولة (يمين/يسار). التوالي الأمامي/الخلفي غير مقيَّد.
+// خوارزمية جشعة: بكل خطوة نأخذ مقعد A من أكبر مجموعة متبقية، ومقعد B من مجموعة مختلفة
+// إن وُجدت — وهذا يضمن تفادي التكرار ما لم يكن صفّ واحد يشكّل أكثر من نصف الطلاب (حالة يستحيل فيها تفاديه رياضياً).
+function buildSeating(list, grades){
+  const groups = new Map();
+  list.forEach(s=>{
+    const g = gradeForSection(s.section, grades);
+    const key = g ? g.id : "_none";
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  });
+  let buckets = [...groups.entries()].map(([gid,arr])=>({gid, arr: shuffleArr(arr)}));
+  const pairs = [];
+  while(buckets.some(b=>b.arr.length)){
+    buckets = buckets.filter(b=>b.arr.length).sort((a,b)=>b.arr.length-a.arr.length);
+    const first = buckets[0];
+    const a = first.arr.shift();
+    const otherIdx = buckets.findIndex((b,i)=>i>0 && b.arr.length);
+    let b = null;
+    if(otherIdx>=0){ b = buckets[otherIdx].arr.shift(); }
+    else if(first.arr.length){ b = first.arr.shift(); } // لا مفر من تكرار نفس الصف هنا
+    pairs.push([a,b]);
+  }
+  const seating = [];
+  pairs.forEach((pair,i)=>{
+    seating.push({studentId:pair[0].id, section:pair[0].section, seat:"A", table:i+1});
+    if(pair[1]) seating.push({studentId:pair[1].id, section:pair[1].section, seat:"B", table:i+1});
+  });
+  return seating;
+}
 
 /* ========================= Toast ========================= */
 const ToastCtx = React.createContext(()=>{});
@@ -1599,6 +1639,7 @@ function Students({state, commit, user}){
   const [bulk,setBulk]=useState(false);
   const [rec,setRec]=useState(null);
   const [confirm,setConfirm]=useState(null);
+  const [delSec,setDelSec]=useState(false);
   const secs=sectionsRange(state.meta.sectionsCount);
   const mayManage=can(user,"students");
   const mayEdit=can(user,"students")||can(user,"transfer");
@@ -1629,9 +1670,25 @@ function Students({state, commit, user}){
     commit(p=>({
       ...p,
       students:p.students.filter(x=>x.id!==s.id),
-      committees:p.committees.map(c=>({...c,studentIds:c.studentIds.filter(id=>id!==s.id)})),
+      committees:p.committees.map(c=>({...c,
+        studentIds:c.studentIds.filter(id=>id!==s.id),
+        seating:(c.seating||[]).filter(x=>x.studentId!==s.id),
+      })),
     }));
     toast("تم حذف الطالب","err");
+  };
+  const removeSection=(n)=>{
+    const ids = new Set(state.students.filter(s=>s.section===n).map(s=>s.id));
+    commit(p=>({
+      ...p,
+      students:p.students.filter(s=>s.section!==n),
+      committees:p.committees.map(c=>({...c,
+        studentIds:c.studentIds.filter(id=>!ids.has(id)),
+        seating:(c.seating||[]).filter(x=>!ids.has(x.studentId)),
+      })),
+    }));
+    toast(`تم حذف شعبة ${n} بالكامل (${ids.size} طالب)`,"err");
+    setDelSec(false);
   };
 
   return (
@@ -1640,6 +1697,7 @@ function Students({state, commit, user}){
         <div><h2>الطلاب</h2><p>{state.students.length} طالب · إضافة، نقل بين الشُّعب، تعديل، وحذف.</p></div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button className="btn ghost" onClick={()=>printRoster(list, fSec==="all"?"جميع الشُّعب":`شعبة ${fSec} — ${gradeName(+fSec,state.grades)}`, state)} disabled={!list.length}>تصدير كشف</button>
+          {mayManage && <button className="btn danger" onClick={()=>setDelSec(true)}>حذف شعبة كاملة</button>}
           {mayManage && <button className="btn ghost" onClick={()=>setBulk(true)}>إضافة دفعة</button>}
           {mayManage && <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة طالب</button>}
         </div>
@@ -1682,7 +1740,33 @@ function Students({state, commit, user}){
       {bulk && <BulkStudents secs={secs} grades={state.grades} onClose={()=>setBulk(false)} onAdd={addBulk}/>}
       {rec && <StudentRecord student={rec} state={state} commit={commit} user={user} onClose={()=>setRec(null)}/>}
       {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
+      {delSec && <DeleteSectionModal state={state} secs={secs} onClose={()=>setDelSec(false)} onDelete={removeSection}/>}
     </div>
+  );
+}
+function DeleteSectionModal({state,secs,onClose,onDelete}){
+  const counts = secs.map(n=>({n, count: state.students.filter(s=>s.section===n).length})).filter(x=>x.count>0);
+  const [sec,setSec]=useState(counts[0]?counts[0].n:"");
+  const [confirm,setConfirm]=useState(null);
+  const count = (counts.find(x=>x.n===+sec)||{}).count||0;
+  return (
+    <Modal title="حذف شعبة كاملة" onClose={onClose}
+      foot={<>
+        <button className="btn danger" disabled={!sec||!count}
+          onClick={()=>setConfirm({text:`حذف شعبة ${sec} بالكامل؟ سيُحذف ${count} طالب نهائياً، ولا يمكن التراجع.`,
+            onYes:()=>onDelete(+sec)})}>حذف الشعبة نهائياً</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button>
+      </>}>
+      <div className="banner warn"><span>⚠</span><div>هذا الإجراء نهائي — يحذف كل طلاب الشعبة المختارة من النظام بالكامل (لا يشمل حذف الشعبة من عداد الشُّعب بالإعدادات).</div></div>
+      {!counts.length
+        ? <div className="empty" style={{padding:"20px 0"}}>لا توجد شُعب فيها طلاب لحذفها.</div>
+        : <Field label="الشعبة">
+            <select className="input" value={sec} onChange={e=>setSec(e.target.value)}>
+              {counts.map(x=><option key={x.n} value={x.n}>شعبة {x.n} — {gradeName(x.n,state.grades)} · {x.count} طالب</option>)}
+            </select>
+          </Field>}
+      {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
+    </Modal>
   );
 }
 function BulkStudents({secs,grades,onClose,onAdd}){
@@ -1880,157 +1964,311 @@ function CopySchedule({secs,current,grades,onClose,onCopy}){
 function Committees({state, commit}){
   const toast=useToast();
   const [form,setForm]=useState(false);
+  const [auto,setAuto]=useState(false);
   const [verify,setVerify]=useState(false);
   const [confirm,setConfirm]=useState(null);
   const {committees,students,grades}=state;
 
-  const assigned = useMemo(()=>{
+  // طالب يُعتبر "مشغولاً" فقط إذا كان بلجنة بنفس تاريخ اللجنة الجديدة (يقدر يكون بلجان مختلفة بأيام مختلفة)
+  const assignedOn = date => {
+    const set=new Set();
+    committees.forEach(c=>{ if(c.date===date) c.studentIds.forEach(id=>set.add(id)); });
+    return set;
+  };
+  const totalAssignedToday = useMemo(()=>{
     const set=new Set(); committees.forEach(c=>c.studentIds.forEach(id=>set.add(id))); return set;
   },[committees]);
 
-  const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"—";
-  const secOf=id=>(students.find(s=>s.id===id)||{}).section;
+  const bySection = id => (students.find(s=>s.id===id)||{});
+
+  const nextNumber = list => (list.reduce((m,x)=>Math.max(m,x.number),0))+1;
 
   const create=(c)=>{
-    const number=(committees.reduce((m,x)=>Math.max(m,x.number),0))+1;
-    commit(p=>({...p,committees:[...p.committees,{...c,id:uid(),number,approved:true}]}));
+    let number;
+    commit(p=>{ number=nextNumber(p.committees); return {...p,committees:[...p.committees,{...c,id:uid(),number,approved:true}]}; });
     toast(`تم اعتماد اللجنة رقم ${number}`); setForm(false);
+  };
+  const createBatch=(list)=>{
+    commit(p=>{
+      let n=nextNumber(p.committees);
+      const rows=list.map(c=>({...c,id:uid(),number:n++,approved:true}));
+      return {...p,committees:[...p.committees,...rows]};
+    });
+    toast(`تم اعتماد ${list.length} لجنة`); setAuto(false);
   };
   const remove=c=>{ commit(p=>({...p,committees:p.committees.filter(x=>x.id!==c.id)})); toast("تم حذف اللجنة","err"); };
 
   return (
     <div className="rise">
       <div className="section-head">
-        <div><h2>لجان الاختبارات</h2><p>وزّع الطلاب على لجان — كل لجنة تجمع شعبتين من صفّين مختلفين، بدون تكرار أي طالب.</p></div>
-        <div style={{display:"flex",gap:8}}>
+        <div><h2>لجان الاختبارات</h2><p>كوّن لجاناً تجمع أكثر من شعبة وصف، يدوياً أو تلقائياً — بترقيم جلوس A/B يمنع تجاور طلاب نفس الصف.</p></div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button className="btn ghost" onClick={()=>setVerify(true)} disabled={!committees.length}>تحقّق من اللجان</button>
+          <button className="btn ghost" onClick={()=>setAuto(true)}>⚡ تكوين لجان تلقائي</button>
           <button className="btn" onClick={()=>setForm(true)}>+ تكوين لجنة</button>
         </div>
       </div>
 
       <div className="banner info">
         <span>◉</span>
-        <div>الطلاب الموزّعون: <b>{assigned.size}</b> من {students.length} · المتبقّون بدون لجنة: <b>{students.length-assigned.size}</b></div>
+        <div>إجمالي مقاعد اللجان الحالية: <b>{committees.reduce((m,c)=>m+c.studentIds.length,0)}</b> · عدد اللجان: <b>{committees.length}</b> · طلاب لهم لجنة واحدة على الأقل: <b>{totalAssignedToday.size}</b> من {students.length}</div>
       </div>
 
       {committees.length===0
         ? <div className="card"><div className="empty"><div className="big">⬚</div>لم تُكوَّن أي لجنة بعد.</div></div>
         : <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))"}}>
             {committees.slice().sort((a,b)=>a.number-b.number).map(c=>{
-              const cntA=c.studentIds.filter(id=>secOf(id)===c.sectionA).length;
-              const cntB=c.studentIds.filter(id=>secOf(id)===c.sectionB).length;
+              const perSection = {};
+              c.studentIds.forEach(id=>{ const sec=bySection(id).section; if(sec!=null) perSection[sec]=(perSection[sec]||0)+1; });
               return <div className="card pad" key={c.id}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                   <div>
-                    <div className="eyebrow">لجنة رقم {c.number}</div>
-                    <h3 style={{margin:"2px 0 0",fontSize:19}}>{c.subject||"اختبار"}</h3>
+                    <div className="eyebrow">لجنة رقم {c.number}{c.auto?" · تلقائية":""}</div>
+                    <h3 style={{margin:"2px 0 0",fontSize:19}}>{c.venue||"—"}</h3>
                     <div style={{fontSize:12.5,color:"var(--ink-soft)",marginTop:2}}>
-                      {c.date?`${weekdayOf(c.date)} ${fmtDate(c.date)} · `:""}{c.venue||"—"}
+                      {c.date?`${weekdayOf(c.date)} ${fmtDate(c.date)}`:"بدون تاريخ"}
                     </div>
                   </div>
                   <span className="tag brand">{c.studentIds.length} طالب</span>
                 </div>
                 <div style={{marginTop:12,fontSize:13,display:"flex",flexDirection:"column",gap:5}}>
-                  <div>شعبة {c.sectionA} <span style={{color:"var(--ink-faint)"}}>({gradeName(c.sectionA,grades)})</span> — {cntA} طالب</div>
-                  <div>شعبة {c.sectionB} <span style={{color:"var(--ink-faint)"}}>({gradeName(c.sectionB,grades)})</span> — {cntB} طالب</div>
+                  {(c.entries||[]).map((e,i)=>
+                    <div key={i}>شعبة {e.section} <span style={{color:"var(--ink-faint)"}}>({gradeName(e.section,grades)})</span>
+                      {" — "}{e.subject||"بدون مادة"} — {perSection[e.section]||0} طالب</div>)}
                 </div>
                 <div style={{display:"flex",gap:8,marginTop:14}}>
-                  <button className="btn sm" onClick={()=>printCommittee(c,state)}>تصدير PDF</button>
+                  <button className="btn sm" onClick={()=>printCommittee(c,state)}>تصدير كشف مناداة</button>
                   <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف اللجنة رقم ${c.number}؟ سيعود طلابها متاحين.`,onYes:()=>remove(c)})}>حذف</button>
                 </div>
               </div>;
             })}
           </div>}
 
-      {form && <CommitteeForm state={state} assigned={assigned} onClose={()=>setForm(false)} onCreate={create}/>}
+      {form && <CommitteeForm state={state} assignedOn={assignedOn} onClose={()=>setForm(false)} onCreate={create}/>}
+      {auto && <AutoCommitteeModal state={state} assignedOn={assignedOn} onClose={()=>setAuto(false)} onCreateBatch={createBatch}/>}
       {verify && <VerifyModal state={state} onClose={()=>setVerify(false)}/>}
       {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
     </div>
   );
 }
 
-function CommitteeForm({state, assigned, onClose, onCreate}){
+const emptyEntry = ()=>({section:"", subject:"", count:0});
+
+function CommitteeForm({state, assignedOn, onClose, onCreate}){
   const toast=useToast();
-  const {students,grades,meta}=state;
+  const {students,grades,meta,examSchedules}=state;
   const secs=sectionsRange(meta.sectionsCount);
-  const [secA,setSecA]=useState(""); const [secB,setSecB]=useState("");
-  const [nA,setNA]=useState(15); const [nB,setNB]=useState(15);
-  const [subject,setSubject]=useState(""); const [date,setDate]=useState(""); const [venue,setVenue]=useState("");
+  const [date,setDate]=useState(todayISO());
+  const [venue,setVenue]=useState("");
+  const [entries,setEntries]=useState([emptyEntry(),emptyEntry()]);
 
-  const availBySec = sec => students.filter(s=>s.section===+sec && !assigned.has(s.id));
-  const gradeA = secA? gradeForSection(+secA,grades):null;
-  // الشعبة B: تُستثنى الشُّعب من نفس صف A
-  const bOptions = secs.filter(n=>{
-    if(!secA) return false;
-    if(n===+secA) return false;
-    const g=gradeForSection(n,grades);
-    return !(gradeA && g && g.id===gradeA.id); // نفس الصف مشطوب
-  });
+  const busy = assignedOn(date);
+  const availBySec = sec => sec? students.filter(s=>s.section===+sec && !busy.has(s.id)) : [];
+  const usedSections = entries.map(e=>+e.section).filter(Boolean);
 
-  const availA=secA?availBySec(secA):[];
-  const availB=secB?availBySec(secB):[];
-  const maxA=availA.length, maxB=availB.length;
-  const okCounts = nA>=0 && nB>=0 && nA<=maxA && nB<=maxB && (nA+nB)>0;
+  const suggestSubject = (sec, d) => { const r=(examSchedules[sec]||[]).find(x=>x.date===d); return r?r.subject:""; };
 
-  const half=()=>{ setNA(Math.min(15,maxA)); setNB(Math.min(15,maxB)); };
+  useEffect(()=>{
+    setEntries(list=>list.map(e=>{
+      if(!e.section) return e;
+      const s=suggestSubject(+e.section,date);
+      return s?{...e,subject:s}:e;
+    }));
+    // eslint-disable-next-line
+  },[date]);
+
+  const setEntry=(i,patch)=>setEntries(list=>list.map((e,idx)=>idx===i?{...e,...patch}:e));
+  const pickSection=(i,val)=>{
+    const s = val? suggestSubject(+val,date) : "";
+    setEntry(i, {section:val, subject:s, count:0});
+  };
+  const addEntry=()=>{ if(entries.length<3) setEntries(list=>[...list,emptyEntry()]); };
+  const removeEntry=(i)=>{ if(entries.length>2) setEntries(list=>list.filter((_,idx)=>idx!==i)); };
+
+  const okAll = date && venue.trim() && entries.length>=2 &&
+    entries.every(e=>e.section && e.subject.trim() && e.count>0 && e.count<=availBySec(e.section).length);
+  const total = entries.reduce((m,e)=>m+(+e.count||0),0);
 
   const submit=()=>{
-    if(!secA||!secB){ toast("اختر الشعبتين","err"); return; }
-    if(!okCounts){ toast("تحقق من أعداد الطلاب","err"); return; }
-    const ids=[...availA.slice(0,nA).map(s=>s.id), ...availB.slice(0,nB).map(s=>s.id)];
-    onCreate({sectionA:+secA, sectionB:+secB, studentIds:ids, subject:subject.trim(), date, venue:venue.trim()});
+    if(!okAll){ toast("أكمل كل حقول اللجنة (شعبة، مادة، عدد صحيح لكل اختبار)","err"); return; }
+    const chosen=[];
+    entries.forEach(e=>{ chosen.push(...shuffleArr(availBySec(e.section)).slice(0,+e.count)); });
+    const seating = buildSeating(chosen.map(s=>({id:s.id,section:s.section})), grades);
+    onCreate({
+      date, venue:venue.trim(),
+      entries: entries.map(e=>({section:+e.section, subject:e.subject.trim()})),
+      studentIds: chosen.map(s=>s.id),
+      seating, auto:false,
+    });
   };
 
   return (
     <Modal title="تكوين لجنة جديدة" onClose={onClose} wide
       foot={<>
-        <button className="btn accent" disabled={!okCounts||!secB} onClick={submit}>اعتماد اللجنة ({nA+nB} طالب)</button>
+        <button className="btn accent" disabled={!okAll} onClick={submit}>اعتماد اللجنة ({total} طالب)</button>
         <button className="btn ghost" onClick={onClose}>إلغاء</button>
       </>}>
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
-        <Field label="الشعبة الأولى (الاختيار 1)" style={{margin:0}}>
-          <select className="input" value={secA} onChange={e=>{setSecA(e.target.value);setSecB("");}}>
-            <option value="">— اختر —</option>
-            {secs.map(n=><option key={n} value={n}>شعبة {n} · {gradeName(n,grades)} · متاح {availBySec(n).length}</option>)}
-          </select>
+        <Field label="تاريخ الاختبار" style={{margin:0}}>
+          <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)}/>
         </Field>
-        <Field label="الشعبة الثانية (الاختيار 2) — من صف مختلف" style={{margin:0}}>
-          <select className="input" value={secB} onChange={e=>setSecB(e.target.value)} disabled={!secA}>
-            <option value="">— اختر —</option>
-            {bOptions.map(n=><option key={n} value={n}>شعبة {n} · {gradeName(n,grades)} · متاح {availBySec(n).length}</option>)}
-          </select>
+        <Field label="مقر الاختبار (القاعة)" style={{margin:0}}>
+          <input className="input" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="مثال: قاعة 3 — الدور الأول"/>
         </Field>
       </div>
 
-      {secA && !bOptions.length &&
-        <div className="banner warn" style={{marginTop:14}}>⚠ لا توجد شُعب متاحة من صفوف أخرى. عرّف صفوفاً مختلفة من الإعدادات.</div>}
+      <div style={{borderTop:"1px solid var(--line)",margin:"16px 0"}}/>
+      <div className="eyebrow" style={{marginBottom:8}}>الشُّعب والمواد ({entries.length} من 3) — لجنة واحدة تجمع اختبارين أو ثلاثة معاً</div>
 
-      {secA && secB && <>
-        <div className="banner info" style={{marginTop:16,marginBottom:10}}>
-          <span>⇄</span><div>التقسيم بين الشعبتين — المتاح: شعبة {secA} = {maxA} طالب · شعبة {secB} = {maxB} طالب. <button className="btn ghost sm" style={{marginRight:8}} onClick={half}>نص بنص</button></div>
+      {entries.map((e,i)=>{
+        const opts = secs.filter(n=>!usedSections.includes(n) || +e.section===n);
+        const avail = availBySec(e.section).length;
+        return (
+          <div key={i} className="card pad" style={{marginBottom:12,background:"var(--paper)"}}>
+            <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12}}>
+              <Field label={`الشعبة ${i+1}`} style={{margin:0}}>
+                <select className="input" value={e.section} onChange={ev=>pickSection(i,ev.target.value)}>
+                  <option value="">— اختر —</option>
+                  {opts.map(n=><option key={n} value={n}>شعبة {n} · {gradeName(n,grades)} · متاح {availBySec(n).length}</option>)}
+                </select>
+              </Field>
+              <Field label="المادة" style={{margin:0}}>
+                <select className="input" value={e.subject} onChange={ev=>setEntry(i,{subject:ev.target.value})} disabled={!e.section}>
+                  <option value="">— اختر —</option>{SUBJECTS.map(s=><option key={s}>{s}</option>)}
+                </select>
+              </Field>
+              <Field label="عدد الطلاب" style={{margin:0}} hint={e.count>avail?`أكبر من المتاح (${avail})`:undefined}>
+                <div style={{display:"flex",gap:8}}>
+                  <input className="input" type="number" min="0" max={avail} value={e.count}
+                    onChange={ev=>setEntry(i,{count:Math.max(0,+ev.target.value||0)})} disabled={!e.section} aria-invalid={e.count>avail}/>
+                  <button type="button" className="btn ghost sm" disabled={!e.section} onClick={()=>setEntry(i,{count:avail})}>الكل</button>
+                </div>
+              </Field>
+            </div>
+            {entries.length>2 &&
+              <button type="button" className="btn danger sm" style={{marginTop:10}} onClick={()=>removeEntry(i)}>حذف هذا الاختبار من اللجنة</button>}
+          </div>
+        );
+      })}
+      {entries.length<3 && <button type="button" className="btn ghost" onClick={addEntry}>+ إضافة شعبة/اختبار ثالث</button>}
+
+      <div style={{textAlign:"center",margin:"14px 0 0",fontFamily:"El Messiri",fontSize:18}}>حجم اللجنة: {total} طالب</div>
+    </Modal>
+  );
+}
+
+function AutoCommitteeModal({state, assignedOn, onClose, onCreateBatch}){
+  const toast=useToast();
+  const {students,grades,meta,examSchedules}=state;
+  const secs=sectionsRange(meta.sectionsCount);
+  const [date,setDate]=useState(todayISO());
+  const [rooms,setRooms]=useState([{name:"قاعة 1",capacity:30},{name:"قاعة 2",capacity:30}]);
+  const [preview,setPreview]=useState(null); // [{venue,entries,studentIds,seating}]
+
+  const busy = assignedOn(date);
+  const sectionsToday = useMemo(()=>{
+    return secs.map(n=>{
+      const sched=(examSchedules[n]||[]).find(r=>r.date===date);
+      if(!sched) return null;
+      const avail=students.filter(s=>s.section===n && !busy.has(s.id));
+      return {section:n, subject:sched.subject, avail};
+    }).filter(Boolean);
+  },[date,examSchedules,students,busy]);
+
+  const totalStudents = sectionsToday.reduce((m,s)=>m+s.avail.length,0);
+  const totalCapacity = rooms.reduce((m,r)=>m+(+r.capacity||0),0);
+  const canGenerate = sectionsToday.length>0 && totalStudents>0 && rooms.every(r=>r.name.trim()) && totalCapacity>=totalStudents;
+
+  const setRoom=(i,patch)=>setRooms(list=>list.map((r,idx)=>idx===i?{...r,...patch}:r));
+  const addRoom=()=>setRooms(list=>[...list,{name:`قاعة ${list.length+1}`,capacity:30}]);
+  const delRoom=(i)=>setRooms(list=>list.length>1?list.filter((_,idx)=>idx!==i):list);
+
+  const generate=()=>{
+    if(!canGenerate) return;
+    const subjectOf = new Map(sectionsToday.map(s=>[s.section,s.subject]));
+    const pool = sectionsToday.flatMap(s=>s.avail.map(st=>({id:st.id,section:st.section})));
+    const seating = buildSeating(pool, grades); // مُتَجاوَلة بالكامل عبر كل الشُّعب معاً
+    // توزيع بحسب سعة كل قاعة، مع الحفاظ على كل طاولة (A/B) داخل نفس القاعة
+    const pairsMap = new Map();
+    seating.forEach(x=>{ if(!pairsMap.has(x.table)) pairsMap.set(x.table,[]); pairsMap.get(x.table).push(x); });
+    const pairs = [...pairsMap.values()];
+    let ri=0;
+    const roomsOut = rooms.map(r=>({venue:r.name.trim(), cap:+r.capacity||0, seating:[]}));
+    for(const pair of pairs){
+      while(ri<roomsOut.length && roomsOut[ri].seating.length + pair.length > roomsOut[ri].cap){
+        if(roomsOut[ri].seating.length===0) break; // قاعة فاضية وما تكفي حتى لطاولة وحدة — نكمّل فيها رغم كذا
+        ri++;
+      }
+      if(ri>=roomsOut.length) ri=roomsOut.length-1;
+      roomsOut[ri].seating.push(...pair);
+    }
+    const result = roomsOut.filter(r=>r.seating.length).map(r=>{
+      const studentIds=r.seating.map(x=>x.studentId);
+      const secsUsed=[...new Set(r.seating.map(x=>x.section))];
+      const entries=secsUsed.map(sec=>({section:sec, subject:subjectOf.get(sec)||""}));
+      return {venue:r.venue, date, entries, studentIds, seating:r.seating, auto:true};
+    });
+    setPreview(result);
+  };
+
+  const approve=()=>{ if(preview&&preview.length){ onCreateBatch(preview); } };
+
+  return (
+    <Modal title="تكوين لجان تلقائي" onClose={onClose} wide
+      foot={preview
+        ? <>
+            <button className="btn accent" onClick={approve}>اعتماد اللجان ({preview.length})</button>
+            <button className="btn ghost" onClick={generate}>إعادة الخلط</button>
+            <button className="btn ghost" onClick={()=>setPreview(null)}>رجوع للإعداد</button>
+          </>
+        : <>
+            <button className="btn accent" disabled={!canGenerate} onClick={generate}>توليد اللجان</button>
+            <button className="btn ghost" onClick={onClose}>إلغاء</button>
+          </>}>
+
+      {!preview ? <>
+        <Field label="تاريخ الاختبار" style={{maxWidth:260}}>
+          <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)}/>
+        </Field>
+
+        {!sectionsToday.length
+          ? <div className="banner warn">⚠ لا توجد شُعب لها اختبار مجدوَل بهذا التاريخ (جدول الاختبارات). أضِف الاختبارات أولاً من صفحة «جدول الاختبارات».</div>
+          : <div className="card" style={{marginBottom:16}}><table className="tbl">
+              <thead><tr><th>الشعبة</th><th>الصف</th><th>المادة</th><th>عدد المتاح</th></tr></thead>
+              <tbody>{sectionsToday.map(s=><tr key={s.section}>
+                <td>شعبة {s.section}</td><td>{gradeName(s.section,grades)}</td><td>{s.subject}</td><td>{s.avail.length}</td>
+              </tr>)}</tbody>
+            </table></div>}
+
+        <div className="eyebrow" style={{marginBottom:8}}>القاعات المتاحة</div>
+        {rooms.map((r,i)=>
+          <div key={i} style={{display:"flex",gap:10,marginBottom:8,alignItems:"flex-end"}}>
+            <Field label="اسم القاعة" style={{margin:0,flex:2}}>
+              <input className="input" value={r.name} onChange={e=>setRoom(i,{name:e.target.value})}/>
+            </Field>
+            <Field label="السعة" style={{margin:0,flex:1}}>
+              <input className="input" type="number" min="1" value={r.capacity} onChange={e=>setRoom(i,{capacity:Math.max(1,+e.target.value||0)})}/>
+            </Field>
+            {rooms.length>1 && <button type="button" className="btn danger sm" onClick={()=>delRoom(i)}>حذف</button>}
+          </div>
+        )}
+        <button type="button" className="btn ghost sm" onClick={addRoom}>+ إضافة قاعة</button>
+
+        <div className="banner info" style={{marginTop:16}}>
+          <span>◉</span>
+          <div>الطلاب المطلوب توزيعهم: <b>{totalStudents}</b> · إجمالي سعة القاعات المُدخلة: <b>{totalCapacity}</b>
+          {totalCapacity<totalStudents && <><br/><b style={{color:"var(--danger)"}}>السعة غير كافية — زِد {totalStudents-totalCapacity} مقعد على الأقل.</b></>}</div>
         </div>
-        <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
-          <Field label={"عدد من شعبة "+secA} style={{margin:0}} hint={nA>maxA?`أكبر من المتاح (${maxA})`:undefined}>
-            <input className="input" type="number" min="0" max={maxA} value={nA} onChange={e=>setNA(Math.max(0,+e.target.value||0))} aria-invalid={nA>maxA}/>
-          </Field>
-          <Field label={"عدد من شعبة "+secB} style={{margin:0}} hint={nB>maxB?`أكبر من المتاح (${maxB})`:undefined}>
-            <input className="input" type="number" min="0" max={maxB} value={nB} onChange={e=>setNB(Math.max(0,+e.target.value||0))} aria-invalid={nB>maxB}/>
-          </Field>
+      </> : <>
+        <div className="banner ok" style={{background:"var(--ok-soft)",color:"var(--ok)"}}>تم توليد {preview.length} لجنة — راجعها ثم اعتمدها، أو أعد الخلط لتوزيع مختلف.</div>
+        <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))"}}>
+          {preview.map((c,i)=><div className="card pad" key={i}>
+            <h3 style={{margin:"0 0 6px",fontSize:17}}>{c.venue}</h3>
+            <div style={{fontSize:13,color:"var(--ink-soft)"}}>{c.studentIds.length} طالب</div>
+            <div style={{marginTop:8,fontSize:12.5}}>{c.entries.map((e,j)=><div key={j}>شعبة {e.section} — {e.subject}</div>)}</div>
+          </div>)}
         </div>
-        <div style={{textAlign:"center",margin:"6px 0 4px",fontFamily:"El Messiri",fontSize:18}}>حجم اللجنة: {nA+nB} طالب</div>
       </>}
-
-      <div style={{borderTop:"1px solid var(--line)",margin:"18px 0 16px"}}/>
-      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:14}}>
-        <Field label="المادة (اختياري)" style={{margin:0}}>
-          <select className="input" value={subject} onChange={e=>setSubject(e.target.value)}>
-            <option value="">— بدون —</option>{SUBJECTS.map(s=><option key={s}>{s}</option>)}
-          </select></Field>
-        <Field label="التاريخ (اختياري)" style={{margin:0}}>
-          <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)}/></Field>
-      </div>
-      <Field label="مقر الاختبار" style={{margin:"14px 0 0"}}>
-        <input className="input" value={venue} onChange={e=>setVenue(e.target.value)} placeholder="مثال: قاعة 3 — الدور الأول"/></Field>
     </Modal>
   );
 }
@@ -2038,18 +2276,27 @@ function CommitteeForm({state, assigned, onClose, onCreate}){
 function VerifyModal({state,onClose}){
   const {committees,students,grades}=state;
   const issues=[];
-  const seen={};
+  const seenByDate={};
   committees.forEach(c=>{
     c.studentIds.forEach(id=>{
-      if(seen[id]!==undefined){
+      const key=c.date+"|"+id;
+      if(seenByDate[key]!==undefined){
         const nm=(students.find(s=>s.id===id)||{}).name||id;
-        issues.push(`الطالب «${nm}» موجود في لجنتين (${seen[id]} و ${c.number}).`);
-      } else seen[id]=c.number;
+        issues.push(`الطالب «${nm}» موجود في لجنتين بنفس التاريخ (${seenByDate[key]} و ${c.number}) — ${c.date?fmtDate(c.date):"بدون تاريخ"}.`);
+      } else seenByDate[key]=c.number;
     });
-    const gA=gradeForSection(c.sectionA,grades), gB=gradeForSection(c.sectionB,grades);
-    if(gA&&gB&&gA.id===gB.id) issues.push(`لجنة ${c.number}: الشعبتان من نفس الصف (${gA.name}).`);
+    const secs=(c.entries||[]).map(e=>e.section);
+    if(new Set(secs).size!==secs.length) issues.push(`لجنة ${c.number}: نفس الشعبة مكرّرة أكثر من مرة.`);
     const missing=c.studentIds.filter(id=>!students.find(s=>s.id===id));
     if(missing.length) issues.push(`لجنة ${c.number}: ${missing.length} طالب محذوف من النظام.`);
+    const noSeat=c.studentIds.filter(id=>!(c.seating||[]).find(x=>x.studentId===id));
+    if(noSeat.length) issues.push(`لجنة ${c.number}: ${noSeat.length} طالب بدون رقم جلوس (أعد تصدير الكشف لتوليده).`);
+    let sameGrade=0;
+    const bySeat={}; (c.seating||[]).forEach(x=>{ (bySeat[x.table]=bySeat[x.table]||{})[x.seat]=x; });
+    Object.values(bySeat).forEach(t=>{
+      if(t.A&&t.B){ const gA=gradeForSection(t.A.section,grades), gB=gradeForSection(t.B.section,grades); if(gA&&gB&&gA.id===gB.id) sameGrade++; }
+    });
+    if(sameGrade) issues.push(`لجنة ${c.number}: ${sameGrade} طاولة فيها طالبان من نفس الصف بجانب بعض (تعذّر تفاديه بالكامل بسبب أعداد الشُّعب).`);
   });
   return (
     <Modal title="نتيجة التحقّق" onClose={onClose}
@@ -2058,7 +2305,7 @@ function VerifyModal({state,onClose}){
         ? <div style={{textAlign:"center",padding:"20px 0"}}>
             <div style={{fontSize:44,color:"var(--ok)"}}>✓</div>
             <h3 style={{margin:"6px 0"}}>القواعد سليمة</h3>
-            <p style={{color:"var(--ink-soft)",margin:0}}>لا يوجد طالب مكرر، وكل اللجان تجمع صفوفاً مختلفة.</p>
+            <p style={{color:"var(--ink-soft)",margin:0}}>لا يوجد طالب مكرر بنفس اليوم، وكل مقاعد A/B سليمة.</p>
           </div>
         : <div>
             <div className="banner warn"><span>⚠</span><div>وُجدت {issues.length} مشكلة:</div></div>
@@ -2079,6 +2326,11 @@ const PRINT_CSS = `
   .doc-head{ display:flex; justify-content:space-between; align-items:center; gap:16px; padding:0 0 14px; border-bottom:3px solid #1e4fa3; }
   .brand{ display:flex; align-items:center; gap:14px; }
   .seal{ width:58px; height:58px; border-radius:15px; background:linear-gradient(150deg,#1e4fa3,#0e2c5e); color:#fff; display:flex; align-items:center; justify-content:center; font-family:"El Messiri"; font-size:30px; font-weight:700; }
+  .seal.img{ background:none; border-radius:0; object-fit:contain; }
+  .roster-cols{ display:flex; gap:14px; align-items:flex-start; }
+  .roster-cols table.tbl{ flex:1; width:50%; margin-top:0; }
+  table.tbl.roster th, table.tbl.roster td{ padding:5px 6px; font-size:11px; }
+  table.tbl.roster td.seat{ font-family:"El Messiri"; font-weight:700; color:#1e4fa3; }
   .school{ font-family:"El Messiri"; font-size:23px; font-weight:700; color:#0e2c5e; line-height:1.2; }
   .doctitle{ font-size:15px; color:#1e4fa3; font-weight:600; margin-top:2px; }
   .subtitle{ font-size:12.5px; color:#55647d; margin-top:1px; }
@@ -2105,11 +2357,15 @@ const PRINT_CSS = `
   @media print{ .noprint{ display:none; } .sheet{ padding:0; } }
 `;
 
-function printHead({schoolName, title, subtitle, badge}){
+function printHead({schoolName, title, subtitle, badge, logo}){
+  const sealHtml = logo
+    ? `<img class="seal img" src="${esc(MOE_LOGO_URL)}" alt="شعار وزارة التعليم"/>`
+    : `<div class="seal">م</div>`;
   return `<div class="doc-head">
     <div class="brand">
-      <div class="seal">م</div>
+      ${sealHtml}
       <div>
+        ${logo?`<div class="subtitle" style="margin-bottom:2px">المملكة العربية السعودية — وزارة التعليم</div>`:""}
         <div class="school">${esc(schoolName)}</div>
         <div class="doctitle">${esc(title)}</div>
         ${subtitle?`<div class="subtitle">${esc(subtitle)}</div>`:""}
@@ -2140,20 +2396,44 @@ function openPrint(title, innerHTML){
 
 function printCommittee(c, state){
   const {students,grades,meta}=state;
-  const list=c.studentIds.map(id=>students.find(s=>s.id===id)).filter(Boolean);
-  const rows=list.map((s,i)=>`<tr><td>${i+1}</td><td class="name">${esc(s.name)}</td><td>شعبة ${s.section}</td><td>${esc(gradeName(s.section,grades))}</td><td class="sig-cell"></td></tr>`).join("");
-  const inner = printHead({schoolName:meta.schoolName, title:"كشف لجنة اختبار", badge:{k:"رقم اللجنة", v:c.number}})
+  const subjectOf = sec => ((c.entries||[]).find(e=>e.section===sec)||{}).subject || "—";
+  const seatOf = id => (c.seating||[]).find(x=>x.studentId===id);
+  const list = c.studentIds
+    .map(id=>({stu:students.find(s=>s.id===id), seat:seatOf(id)}))
+    .filter(x=>x.stu);
+  list.sort((a,b)=>{
+    const ta=(a.seat&&a.seat.table)||9999, tb=(b.seat&&b.seat.table)||9999;
+    if(ta!==tb) return ta-tb;
+    return ((a.seat&&a.seat.seat)||"").localeCompare((b.seat&&b.seat.seat)||"");
+  });
+
+  const seatLabel = s => s ? `${s.table}${s.seat}` : "—";
+  const rowHtml = it => `<tr><td class="seat">${esc(seatLabel(it.seat))}</td><td class="name">${esc(it.stu.name)}</td><td>شعبة ${it.stu.section}</td><td>${esc(subjectOf(it.stu.section))}</td><td class="sig-cell"></td></tr>`;
+  const theadHtml = `<thead><tr><th style="width:52px">الجلوس</th><th>اسم الطالب</th><th>الشعبة</th><th>المادة</th><th style="width:90px">التوقيع</th></tr></thead>`;
+
+  let tableHtml;
+  if(list.length>22){
+    const mid=Math.ceil(list.length/2);
+    const colA=list.slice(0,mid), colB=list.slice(mid);
+    const build=arr=>`<table class="tbl roster">${theadHtml}<tbody>${arr.map(rowHtml).join("")}</tbody></table>`;
+    tableHtml = `<div class="roster-cols">${build(colA)}${build(colB)}</div>`;
+  } else {
+    tableHtml = `<table class="tbl roster">${theadHtml}<tbody>${list.map(rowHtml).join("")}</tbody></table>`;
+  }
+
+  const entriesLine = (c.entries||[]).map(e=>`شعبة ${e.section} (${esc(gradeName(e.section,grades))}) — ${esc(e.subject||"—")}`).join(" · ");
+
+  const inner = printHead({schoolName:meta.schoolName, title:"كشف مناداة", subtitle:`لجنة اختبار رقم ${c.number}`, badge:{k:"عدد الطلاب", v:c.studentIds.length}, logo:true})
     + printMeta([
-        {k:"المادة", v:c.subject},
+        {k:"مقر الاختبار", v:c.venue},
         {k:"اليوم", v:c.date?weekdayOf(c.date):""},
         {k:"التاريخ", v:c.date?fmtDate(c.date):""},
-        {k:"مقر الاختبار", v:c.venue},
-        {k:"عدد الطلاب", v:c.studentIds.length},
       ])
-    + `<table class="tbl"><thead><tr><th style="width:44px">م</th><th>اسم الطالب</th><th>الشعبة</th><th>الصف</th><th style="width:150px">التوقيع</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<div class="subtitle" style="margin:2px 0 10px">${entriesLine}</div>`
+    + tableHtml
     + printSigns(["رئيس اللجنة","المراقب","وكيل الشؤون"])
     + printFoot(meta.schoolName);
-  openPrint("لجنة "+c.number, inner);
+  openPrint("كشف مناداة - لجنة "+c.number, inner);
 }
 
 function printSchedule(section, rows, state){
