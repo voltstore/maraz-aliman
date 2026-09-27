@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<meta name="theme-color" content="#163f35" />
+<meta name="theme-color" content="#0e2c5e" />
 <title>ثانوية مارز الإيمان — المنصة الإدارية</title>
 <meta name="description" content="منصة إدارية لثانوية مارز الإيمان: الحضور والغياب، إدارة الطلاب والمعلمين، ولجان الاختبارات." />
 
@@ -23,32 +23,32 @@
 
 <style>
   :root{
-    --paper:#f6f1e7;
-    --paper-2:#fffdf8;
-    --paper-3:#efe8d8;
-    --ink:#221d18;
-    --ink-soft:#6a6055;
-    --ink-faint:#9a8f80;
-    --brand:#1f5d4f;
-    --brand-deep:#163f35;
-    --brand-soft:#e6efe9;
-    --accent:#c25a34;
-    --accent-soft:#f6e3d8;
-    --line:#e4dccc;
-    --line-strong:#d3c8b2;
-    --ok:#2f7d5b;
-    --ok-soft:#e3f0e8;
-    --danger:#b23a2e;
-    --danger-soft:#f6e0dc;
-    --warn:#c78a1e;
-    --warn-soft:#f7eccf;
-    --info:#3d6b8e;
-    --info-soft:#e2ebf2;
-    --shadow-sm:0 1px 2px rgba(34,29,24,.06);
-    --shadow:0 6px 24px -12px rgba(34,29,24,.35);
-    --shadow-lg:0 24px 60px -28px rgba(34,29,24,.5);
-    --r:14px;
-    --r-sm:10px;
+    --paper:#f3f7fc;
+    --paper-2:#ffffff;
+    --paper-3:#eaf2fb;
+    --ink:#0f2340;
+    --ink-soft:#57657f;
+    --ink-faint:#8b98b0;
+    --brand:#1e4fa3;
+    --brand-deep:#0e2c5e;
+    --brand-soft:#e8f0fd;
+    --accent:#2f6fed;
+    --accent-soft:#e6edfe;
+    --line:#dde8f5;
+    --line-strong:#bccee5;
+    --ok:#1f8f5f;
+    --ok-soft:#e2f5ec;
+    --danger:#c23a3a;
+    --danger-soft:#fbe6e6;
+    --warn:#b8860f;
+    --warn-soft:#faf0da;
+    --info:#2f6fed;
+    --info-soft:#e6edfe;
+    --shadow-sm:0 1px 3px rgba(14,44,94,.08);
+    --shadow:0 10px 28px -14px rgba(14,44,94,.32);
+    --shadow-lg:0 28px 64px -24px rgba(14,44,94,.45);
+    --r:16px;
+    --r-sm:11px;
   }
   *{box-sizing:border-box}
   html{color-scheme:light}
@@ -61,8 +61,9 @@
     -webkit-font-smoothing:antialiased;
     touch-action:manipulation;
     -webkit-tap-highlight-color:transparent;
-    background-image:radial-gradient(circle at 12% -10%, #ffffff8c 0, transparent 45%),
-                     radial-gradient(circle at 110% 0%, #e9f0ec66 0, transparent 40%);
+    background-image:radial-gradient(circle at 12% -10%, #ffffffb0 0, transparent 45%),
+                     radial-gradient(circle at 110% 0%, #d9e8fb8c 0, transparent 42%),
+                     radial-gradient(circle at 0% 100%, #e6effc66 0, transparent 40%);
     background-attachment:fixed;
   }
   /* Visible keyboard focus for all interactive elements */
@@ -78,21 +79,21 @@
   /* ---------- Layout ---------- */
   .app{display:flex;min-height:100vh}
   .sidebar{
-    width:264px;flex-shrink:0;background:var(--brand-deep);
-    color:#eef3ef;padding:22px 16px;position:sticky;top:0;height:100vh;
+    width:264px;flex-shrink:0;background:linear-gradient(190deg,var(--brand-deep) 0%,#081b40 100%);
+    color:#eaf1fb;padding:22px 16px;position:sticky;top:0;height:100vh;
     display:flex;flex-direction:column;gap:6px;overflow-y:auto;
   }
   .brand{display:flex;gap:12px;align-items:center;padding:6px 8px 20px;margin-bottom:8px;border-bottom:1px solid #ffffff1f}
   .brand .seal{
     width:46px;height:46px;border-radius:13px;flex-shrink:0;display:grid;place-items:center;
-    background:linear-gradient(150deg,var(--accent),#9c3f22);color:#fff;font-family:"El Messiri";
+    background:linear-gradient(150deg,var(--accent),var(--brand-deep));color:#fff;font-family:"El Messiri";
     font-size:22px;font-weight:700;box-shadow:0 8px 20px -8px #00000066;
   }
   .brand h1{font-size:18px;margin:0;color:#fff}
   .brand span{font-size:12px;color:#ffffff9c;display:block;font-family:"IBM Plex Sans Arabic"}
   .nav-item{
     display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;cursor:pointer;
-    color:#d6e0da;font-size:15px;font-weight:500;
+    color:#cfdcf0;font-size:15px;font-weight:500;
     transition:background .16s cubic-bezier(.4,0,.2,1),color .16s cubic-bezier(.4,0,.2,1),box-shadow .16s;
     border:1px solid transparent;position:relative;
     width:100%;text-align:right;font-family:inherit;background:transparent;
@@ -106,7 +107,7 @@
   .main{flex:1;min-width:0;display:flex;flex-direction:column}
   .topbar{
     display:flex;align-items:center;justify-content:space-between;gap:16px;
-    padding:16px 30px;background:#fffdf8cc;backdrop-filter:blur(8px);
+    padding:16px 30px;background:#ffffffd8;backdrop-filter:blur(8px);
     border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;
   }
   .topbar .page-title{font-size:23px;margin:0}
@@ -139,12 +140,12 @@
     padding:10px 18px;border-radius:11px;font-size:14.5px;font-weight:600;cursor:pointer;
     transition:transform .14s cubic-bezier(.4,0,.2,1),box-shadow .14s,background .14s;box-shadow:var(--shadow-sm);
   }
-  .btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px #1f5d4f88;background:var(--brand-deep)}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px -8px #1e4fa388;background:var(--brand-deep)}
   .btn:active{transform:translateY(0)}
   .btn.ghost{background:transparent;color:var(--brand-deep);border-color:var(--line-strong);box-shadow:none}
   .btn.ghost:hover{background:var(--brand-soft)}
-  .btn.accent{background:var(--accent);border-color:#9c3f22}
-  .btn.accent:hover{background:#a5471f}
+  .btn.accent{background:var(--accent);border-color:var(--brand-deep)}
+  .btn.accent:hover{background:#2558c9}
   .btn.danger{background:transparent;color:var(--danger);border-color:var(--danger-soft)}
   .btn.danger:hover{background:var(--danger-soft)}
   .btn.sm{padding:7px 12px;font-size:13px;border-radius:9px}
@@ -162,8 +163,8 @@
 
   .tag{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:30px;font-size:12.5px;font-weight:600;
     background:var(--paper-3);color:var(--ink-soft);border:1px solid var(--line)}
-  .tag.brand{background:var(--brand-soft);color:var(--brand-deep);border-color:#cfe0d7}
-  .tag.accent{background:var(--accent-soft);color:#9c3f22;border-color:#eccbba}
+  .tag.brand{background:var(--brand-soft);color:var(--brand-deep);border-color:#cfe0f7}
+  .tag.accent{background:var(--accent-soft);color:var(--brand-deep);border-color:#c9d9fb}
 
   .pill{padding:4px 11px;border-radius:30px;font-size:12.5px;font-weight:600;display:inline-block}
   .pill.present{background:var(--ok-soft);color:var(--ok)}
@@ -192,13 +193,13 @@
   .bar-row{display:flex;align-items:center;gap:12px;margin-bottom:11px;font-size:13.5px}
   .bar-row .lbl{width:120px;flex-shrink:0;color:var(--ink-soft);font-weight:500;text-align:left}
   .bar-track{flex:1;height:12px;background:var(--paper-3);border-radius:20px;overflow:hidden}
-  .bar-fill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--brand),#2c7a68);transition:width .6s cubic-bezier(.2,.7,.2,1)}
-  .bar-fill.hot{background:linear-gradient(90deg,var(--accent),#d97a54)}
+  .bar-fill{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--brand),var(--accent));transition:width .6s cubic-bezier(.2,.7,.2,1)}
+  .bar-fill.hot{background:linear-gradient(90deg,var(--danger),#e2574a)}
   .bar-row .num{width:44px;text-align:left;font-weight:700;font-family:"El Messiri";font-variant-numeric:tabular-nums}
   table.tbl td{font-variant-numeric:tabular-nums}
 
   /* ---------- Modal ---------- */
-  .overlay{position:fixed;inset:0;background:#221d1899;backdrop-filter:blur(3px);z-index:100;
+  .overlay{position:fixed;inset:0;background:#0f234099;backdrop-filter:blur(3px);z-index:100;
     overflow-y:auto;padding:24px 16px;animation:fade .18s ease both}
   .modal{background:var(--paper-2);border-radius:16px;box-shadow:var(--shadow-lg);width:100%;max-width:560px;
     border:1px solid var(--line);margin:0 auto}
@@ -235,7 +236,7 @@
 
   .banner{padding:13px 16px;border-radius:12px;font-size:13.5px;display:flex;gap:10px;align-items:flex-start;margin-bottom:18px}
   .banner.warn{background:var(--warn-soft);color:#8a6410;border:1px solid #ecd28f}
-  .banner.info{background:var(--info-soft);color:#2f5573;border:1px solid #c4d6e4}
+  .banner.info{background:var(--info-soft);color:#1d4ba0;border:1px solid #c9dbf3}
 
   @keyframes fade{from{opacity:0}to{opacity:1}}
   @keyframes pop{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
@@ -245,12 +246,12 @@
 
   /* ---------- Login ---------- */
   .login-wrap{min-height:100vh;display:grid;grid-template-columns:1.1fr .9fr}
-  .login-art{background:linear-gradient(160deg,var(--brand-deep),#0f2f28);color:#fff;padding:60px 54px;
+  .login-art{background:linear-gradient(160deg,var(--brand-deep),#061530);color:#fff;padding:60px 54px;
     display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}
   .login-art:after{content:"";position:absolute;inset:0;background:
-    radial-gradient(circle at 80% 20%, #c25a3433 0, transparent 45%),
-    radial-gradient(circle at 10% 90%, #ffffff12 0, transparent 40%)}
-  .login-art .seal-lg{width:74px;height:74px;border-radius:20px;background:linear-gradient(150deg,var(--accent),#9c3f22);
+    radial-gradient(circle at 80% 20%, #2f6fed3d 0, transparent 45%),
+    radial-gradient(circle at 10% 90%, #ffffff14 0, transparent 40%)}
+  .login-art .seal-lg{width:74px;height:74px;border-radius:20px;background:linear-gradient(150deg,var(--accent),var(--brand-deep));
     display:grid;place-items:center;font-family:"El Messiri";font-size:34px;font-weight:700;box-shadow:0 16px 40px -14px #000;z-index:1}
   .login-art h1{font-size:40px;margin:20px 0 10px;z-index:1;position:relative}
   .login-art p{color:#ffffffcc;font-size:16px;max-width:360px;z-index:1;position:relative}
@@ -265,6 +266,20 @@
     .content{padding:20px 16px 50px}
     .topbar{padding:14px 16px}
     .login-form{padding:24px 16px}
+  }
+  /* جداول عريضة على شاشة ضيقة: تمرير أفقي داخل البطاقة بدل كسر التخطيط */
+  .card:has(table.tbl){overflow-x:auto;-webkit-overflow-scrolling:touch}
+  @media(max-width:480px){
+    .content{padding:16px 12px 44px}
+    .topbar{padding:12px 14px}
+    .topbar .page-title{font-size:19px}
+    .section-head h2{font-size:19px}
+    .card.pad{padding:16px}
+    table.tbl th,table.tbl td{padding:9px 10px;font-size:13.5px}
+    .stat .v{font-size:26px}
+    .modal-body,.modal-head,.modal-foot{padding-left:16px;padding-right:16px}
+    .btn{padding:9px 14px;font-size:13.5px}
+    .login-box{max-width:100%}
   }
   .scrim{display:none}
   .scrim.show{display:block;position:fixed;inset:0;background:#0007;z-index:55}
@@ -2053,40 +2068,40 @@ function VerifyModal({state,onClose}){
   );
 }
 
-/* ---------- نظام تصدير PDF موحّد بهوية المدرسة (أخضر/أبيض) ---------- */
+/* ---------- نظام تصدير PDF موحّد بهوية المدرسة (أزرق/أبيض) ---------- */
 const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 const PRINT_CSS = `
   @page{ size:A4; margin:14mm; }
   *{ box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  body{ font-family:"IBM Plex Sans Arabic",sans-serif; color:#20211c; margin:0; background:#fff; }
+  body{ font-family:"IBM Plex Sans Arabic",sans-serif; color:#14233d; margin:0; background:#fff; }
   .sheet{ padding:2mm; }
-  .doc-head{ display:flex; justify-content:space-between; align-items:center; gap:16px; padding:0 0 14px; border-bottom:3px solid #1f5d4f; }
+  .doc-head{ display:flex; justify-content:space-between; align-items:center; gap:16px; padding:0 0 14px; border-bottom:3px solid #1e4fa3; }
   .brand{ display:flex; align-items:center; gap:14px; }
-  .seal{ width:58px; height:58px; border-radius:15px; background:linear-gradient(150deg,#1f5d4f,#163f35); color:#fff; display:flex; align-items:center; justify-content:center; font-family:"El Messiri"; font-size:30px; font-weight:700; }
-  .school{ font-family:"El Messiri"; font-size:23px; font-weight:700; color:#163f35; line-height:1.2; }
-  .doctitle{ font-size:15px; color:#1f5d4f; font-weight:600; margin-top:2px; }
-  .subtitle{ font-size:12.5px; color:#6a6055; margin-top:1px; }
-  .badge{ border:2px solid #1f5d4f; border-radius:13px; padding:7px 18px; text-align:center; min-width:96px; background:#f4f8f6; }
-  .badge-k{ font-size:11px; color:#5b6b63; }
-  .badge-v{ font-family:"El Messiri"; font-size:30px; font-weight:700; color:#1f5d4f; line-height:1.05; }
+  .seal{ width:58px; height:58px; border-radius:15px; background:linear-gradient(150deg,#1e4fa3,#0e2c5e); color:#fff; display:flex; align-items:center; justify-content:center; font-family:"El Messiri"; font-size:30px; font-weight:700; }
+  .school{ font-family:"El Messiri"; font-size:23px; font-weight:700; color:#0e2c5e; line-height:1.2; }
+  .doctitle{ font-size:15px; color:#1e4fa3; font-weight:600; margin-top:2px; }
+  .subtitle{ font-size:12.5px; color:#55647d; margin-top:1px; }
+  .badge{ border:2px solid #1e4fa3; border-radius:13px; padding:7px 18px; text-align:center; min-width:96px; background:#eaf2fb; }
+  .badge-k{ font-size:11px; color:#55647d; }
+  .badge-v{ font-family:"El Messiri"; font-size:30px; font-weight:700; color:#1e4fa3; line-height:1.05; }
   .meta-row{ display:flex; flex-wrap:wrap; gap:10px; margin:16px 0 6px; }
-  .meta-box{ flex:1; min-width:110px; border:1px solid #d4e2db; border-radius:10px; padding:8px 12px; background:#f7faf8; }
-  .meta-k{ font-size:11px; color:#5b6b63; margin-bottom:3px; }
-  .meta-v{ font-size:14px; font-weight:600; color:#163f35; }
+  .meta-box{ flex:1; min-width:110px; border:1px solid #cfe0f5; border-radius:10px; padding:8px 12px; background:#f5f9fe; }
+  .meta-k{ font-size:11px; color:#55647d; margin-bottom:3px; }
+  .meta-v{ font-size:14px; font-weight:600; color:#0e2c5e; }
   table.tbl{ width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }
-  table.tbl thead th{ background:#1f5d4f; color:#fff; padding:10px 8px; font-weight:600; border:1px solid #1a5044; }
-  table.tbl tbody td{ padding:8px; border:1px solid #dbe6e0; text-align:center; }
-  table.tbl tbody td.name{ text-align:right; font-weight:600; color:#20211c; }
-  table.tbl tbody tr:nth-child(even) td{ background:#f4f8f6; }
+  table.tbl thead th{ background:#1e4fa3; color:#fff; padding:10px 8px; font-weight:600; border:1px solid #0d2a5f; }
+  table.tbl tbody td{ padding:8px; border:1px solid #dbe8f7; text-align:center; }
+  table.tbl tbody td.name{ text-align:right; font-weight:600; color:#14233d; }
+  table.tbl tbody tr:nth-child(even) td{ background:#eaf2fb; }
   .sig-cell{ height:22px; }
   thead{ display:table-header-group; }
   tr{ page-break-inside:avoid; }
   .sign-row{ display:flex; justify-content:space-around; gap:20px; margin-top:42px; }
-  .sign{ text-align:center; font-size:13px; color:#3a352e; padding-top:30px; }
-  .sign .line{ border-top:1.6px solid #9aa39d; width:170px; margin:0 auto 6px; }
-  .doc-foot{ margin-top:26px; padding-top:10px; border-top:1px solid #e2e8e4; display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#8a8478; }
-  .noprint{ margin:22px auto; display:block; padding:12px 30px; background:#1f5d4f; color:#fff; border:0; border-radius:10px; font-size:15px; font-weight:600; font-family:inherit; cursor:pointer; }
+  .sign{ text-align:center; font-size:13px; color:#33415c; padding-top:30px; }
+  .sign .line{ border-top:1.6px solid #9fb2cc; width:170px; margin:0 auto 6px; }
+  .doc-foot{ margin-top:26px; padding-top:10px; border-top:1px solid #dfe8f4; display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#7c8aa3; }
+  .noprint{ margin:22px auto; display:block; padding:12px 30px; background:#1e4fa3; color:#fff; border:0; border-radius:10px; font-size:15px; font-weight:600; font-family:inherit; cursor:pointer; }
   @media print{ .noprint{ display:none; } .sheet{ padding:0; } }
 `;
 
@@ -2169,8 +2184,8 @@ function printStudentRecord(student, state){
   const counts={present:0,absent:0,late:0,excused:0}; history.forEach(h=>counts[h.status]!==undefined&&counts[h.status]++);
   const recs=(records||[]).filter(r=>r.studentId===student.id);
   const notes=recs.filter(r=>r.kind==="note"), incidents=recs.filter(r=>r.kind==="incident");
-  const secH = t => `<h3 style="color:#1f5d4f;font-family:'El Messiri';font-size:16px;margin:20px 0 6px">${t}</h3>`;
-  const none = t => `<div style="color:#8a8478;font-size:13px">${t}</div>`;
+  const secH = t => `<h3 style="color:#1e4fa3;font-family:'El Messiri';font-size:16px;margin:20px 0 6px">${t}</h3>`;
+  const none = t => `<div style="color:#7c8aa3;font-size:13px">${t}</div>`;
   const attRows=history.map(h=>`<tr><td>${esc(weekdayOf(h.date))}</td><td>${esc(fmtDate(h.date))}</td><td>${h.at?esc(fmtTime(h.at)):"—"}</td><td>${esc(statusLabel(h.status))}</td></tr>`).join("");
   const noteRows=notes.map(r=>`<tr><td class="name">${esc(r.text)}</td><td>${esc(r.byName||"")}</td><td>${esc(fmtDate(r.date))}</td></tr>`).join("");
   const incRows=incidents.map(r=>`<tr><td>${esc(sevLabel(r.severity))}</td><td>${esc(r.itype||"—")}</td><td class="name">${esc(r.text)}</td><td>${esc(fmtDate(r.date))}</td></tr>`).join("");
