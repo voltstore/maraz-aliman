@@ -35,6 +35,21 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
+    // سجلات جهاز البصمة: يكتبها فقط برنامج الجسر (zk-bridge) عبر Firebase Admin SDK
+    // (يتجاوز هذه القواعد بمفتاح خدمة)، والكادر يقرأ فقط من المنصة. لا كتابة من المتصفح إطلاقاً.
+    match /fingerprint_logs/{logId} {
+      allow read:  if isStaff();
+      allow update: if isStaff()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['applied','appliedAt']);
+      allow create, delete: if false;
+    }
+
+    // حالة اتصال جهاز/أجهزة البصمة (نبضة حياة من الجسر)
+    match /bridge_status/{deviceId} {
+      allow read:  if isStaff();
+      allow write: if false;
+    }
+
     // امنع أي شيء آخر
     match /{document=**} {
       allow read, write: if false;

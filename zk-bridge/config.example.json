@@ -1,0 +1,10 @@
+{
+  "deviceId": "بصمة-المدخل-الرئيسي",
+  "deviceIp": "192.168.1.201",
+  "devicePort": 4370,
+  "pollIntervalSeconds": 20,
+  "usersRefreshMinutes": 15,
+  "serviceAccountPath": "./serviceAccountKey.json",
+  "firestoreLogsCollection": "fingerprint_logs",
+  "firestoreStatusCollection": "bridge_status"
+}

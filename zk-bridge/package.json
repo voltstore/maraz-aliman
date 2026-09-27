@@ -1,0 +1,14 @@
+{
+  "name": "zk-bridge-maraz-aliman",
+  "version": "1.0.0",
+  "private": true,
+  "description": "جسر يربط جهاز بصمة ZKTeco بقاعدة بيانات منصة ثانوية مارز الإيمان (Firebase Firestore)",
+  "main": "bridge.js",
+  "scripts": {
+    "start": "node bridge.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.1.0",
+    "node-zklib": "^1.0.16"
+  }
+}

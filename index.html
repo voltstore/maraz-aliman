@@ -170,6 +170,10 @@
   .pill.absent{background:var(--danger-soft);color:var(--danger)}
   .pill.late{background:var(--warn-soft);color:#a06e12}
   .pill.excused{background:var(--info-soft);color:var(--info)}
+  .pill.neutral{background:#eef0f3;color:#667}
+  .live-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-left:6px}
+  .live-dot.on{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+  .live-dot.off{background:#c8ccd2}
 
   table.tbl{width:100%;border-collapse:collapse;font-size:14.5px}
   table.tbl th{text-align:right;padding:11px 14px;font-size:12.5px;color:var(--ink-soft);font-weight:600;
@@ -372,6 +376,11 @@ const DEFAULT_STATE = {
 };
 const nowISO = () => new Date().toISOString();
 const fmtTime = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit"}).format(new Date(iso)); }catch(e){ return ""; } };
+const fmtTimeSec = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit",second:"2-digit"}).format(new Date(iso)); }catch(e){ return ""; } };
+const normalizeName = s => (s||"").toString()
+  .replace(/[ً-ْٰ]/g,"")       // إزالة التشكيل
+  .replace(/[أإآ]/g,"ا").replace(/ى/g,"ي")    // توحيد صور الألف والياء
+  .replace(/\s+/g," ").trim().toLowerCase();
 
 function loadLocal(){
   try{ const s = JSON.parse(localStorage.getItem(LS_KEY)); return s || null; }catch(e){ return null; }
@@ -549,6 +558,7 @@ const NAV = [
   {sep:"الرئيسية"},
   {id:"dashboard", label:"لوحة المعلومات", ic:"◧", roles:["manager","deputy","teacher"]},
   {id:"attendance", label:"الحضور والغياب", ic:"✓", roles:["manager","deputy","teacher"], cap:"attendance"},
+  {id:"fingerprint", label:"سجل البصمة", ic:"◆", roles:["manager","deputy"]},
   {id:"records", label:"سجلات الطلاب", ic:"▦", roles:["manager","deputy","teacher"]},
   {id:"stats", label:"التقارير والإحصائيات", ic:"◔", roles:["manager","deputy"]},
   {id:"monitor", label:"مراقبة الغياب", ic:"◎", roles:["manager","deputy"]},
@@ -593,6 +603,7 @@ function Shell({state, commit, user, onLogout, onUserUpdate}){
   const Page = {
     dashboard:<Dashboard state={state} user={user} go={go}/>,
     attendance:<Attendance state={state} commit={commit} user={user}/>,
+    fingerprint:<FingerprintLog state={state} commit={commit} user={user}/>,
     records:<Records state={state} commit={commit} user={user}/>,
     stats:<Stats state={state}/>,
     monitor:<Monitor state={state}/>,
@@ -1070,6 +1081,154 @@ function Monitor({state}){
           </div>;
         })}
       </div>
+    </div>
+  );
+}
+
+/* ========================= FINGERPRINT (سجل البصمة) ========================= */
+// تُكتب السجلات هنا من برنامج جسر خارجي (zk-bridge) متصل بجهاز البصمة على شبكة المدرسة،
+// في مجموعة Firestore منفصلة "fingerprint_logs" — بمعزل عن مستند "maraz/state" لتفادي أي تعارض كتابة.
+function FingerprintLog({state, commit, user}){
+  const toast=useToast();
+  const [logs,setLogs]=useState([]);
+  const [devices,setDevices]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [q,setQ]=useState("");
+  const [date,setDate]=useState(todayISO());
+  const autoAtt = !!(state.meta && state.meta.fingerprintAutoAttendance);
+
+  useEffect(()=>{
+    if(!FIREBASE_READY) { setLoading(false); return; }
+    const unsub = fdb.collection("fingerprint_logs").orderBy("time","desc").limit(1000)
+      .onSnapshot(snap=>{
+        setLogs(snap.docs.map(d=>({id:d.id, ...d.data()})));
+        setLoading(false);
+      }, err=>{ console.warn(err); setLoading(false); });
+    const unsub2 = fdb.collection("bridge_status").onSnapshot(snap=>{
+      setDevices(snap.docs.map(d=>({id:d.id, ...d.data()})));
+    }, err=>console.warn(err));
+    return ()=>{ unsub(); unsub2(); };
+  },[]);
+
+  // فهرسة أسماء الطلاب والمعلمين لمطابقتها تلقائياً باسم البصمة
+  const studentByName = useMemo(()=>{
+    const m=new Map(); (state.students||[]).forEach(s=>m.set(normalizeName(s.name), s)); return m;
+  },[state.students]);
+  const teacherByName = useMemo(()=>{
+    const m=new Map(); (state.teachers||[]).forEach(t=>m.set(normalizeName(t.name), t)); return m;
+  },[state.teachers]);
+
+  const enriched = useMemo(()=>logs.map(l=>{
+    const key = normalizeName(l.name);
+    const student = studentByName.get(key);
+    const teacher = !student ? teacherByName.get(key) : null;
+    return {...l, student, teacher};
+  }),[logs, studentByName, teacherByName]);
+
+  const filtered = useMemo(()=>{
+    const qq = normalizeName(q);
+    return enriched.filter(l=>{
+      if(date && l.dateKey!==date) return false;
+      if(qq && !normalizeName(l.name).includes(qq)) return false;
+      return true;
+    });
+  },[enriched, q, date]);
+
+  // ربط تلقائي بالحضور: عند تفعيل الخيار، أي بصمة طالب اليوم تُسجَّل "حاضر" تلقائياً (مرة واحدة لكل بصمة، بقفل معاملة على المستند)
+  useEffect(()=>{
+    if(!autoAtt || !FIREBASE_READY) return;
+    const today = todayISO();
+    const todo = enriched.filter(l=>l.dateKey===today && l.student && !l.applied);
+    todo.forEach(async log=>{
+      try{
+        const ref = fdb.collection("fingerprint_logs").doc(log.id);
+        let won=false;
+        await fdb.runTransaction(async tx=>{
+          const snap = await tx.get(ref);
+          if(snap.exists && !snap.data().applied){
+            tx.update(ref,{applied:true, appliedAt:firebase.firestore.FieldValue.serverTimestamp()});
+            won=true;
+          }
+        });
+        if(won){
+          commit(prev=>{
+            if((prev.attendance[today]||{})[log.student.id]==="present") return prev;
+            const day={...(prev.attendance[today]||{})}; day[log.student.id]="present";
+            const meta={...((prev.attMeta||{})[today]||{})}; meta[log.student.id]=log.timeISO||nowISO();
+            return {...prev, attendance:{...prev.attendance,[today]:day}, attMeta:{...(prev.attMeta||{}),[today]:meta}};
+          });
+        }
+      }catch(e){ console.warn(e); }
+    });
+  },[enriched, autoAtt]);
+
+  const toggleAuto = ()=>{
+    commit(p=>({...p, meta:{...p.meta, fingerprintAutoAttendance: !autoAtt}}));
+    toast(!autoAtt ? "تم تفعيل الربط التلقائي بالحضور" : "تم إيقاف الربط التلقائي");
+  };
+
+  const onlineDevices = devices.filter(d=>{
+    if(!d.lastSeen || !d.lastSeen.toDate) return false;
+    return (Date.now() - d.lastSeen.toDate().getTime()) < 60000; // نبضة كل أقل من دقيقة تُعتبر "متصل"
+  });
+
+  if(!FIREBASE_READY) return (
+    <div className="card rise pad">
+      <div className="empty"><div className="big">◆</div>سجل البصمة يحتاج اتصالاً بقاعدة بيانات سحابية (Firebase).<br/>
+      <span style={{fontSize:13}}>فعّل Firebase من الإعدادات أعلى الملف ثم أعد التحميل.</span></div>
+    </div>
+  );
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>سجل البصمة</h2><p>كل بصمة تُسجَّل تلقائياً من جهاز البصمة (ZK) بالاسم والتاريخ والوقت للثانية، فور حدوثها.</p></div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",marginBottom:16}}>
+        <Stat k="أجهزة متصلة الآن" v={onlineDevices.length+" / "+devices.length} glyph="◆" foot={devices.length?devices.map(d=>d.id).join("، "):"لا يوجد جهاز مُعرَّف بعد"}/>
+        <Stat k="بصمات اليوم" v={enriched.filter(l=>l.dateKey===todayISO()).length} glyph="✓" foot="منذ منتصف الليل"/>
+        <Stat k="إجمالي السجلات المعروضة" v={logs.length} glyph="▦" foot="آخر 1000 سجل"/>
+      </div>
+
+      {!devices.length && <div className="banner warn">⚠ ما وصل أي بصمة بعد. تأكد إن برنامج الجسر (zk-bridge) شغّال على جهاز متصل بنفس شبكة جهاز البصمة. راجع دليل التشغيل داخل مجلد zk-bridge.</div>}
+
+      <div className="card pad" style={{marginBottom:16,display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end"}}>
+        <Field label="بحث بالاسم" style={{margin:0,minWidth:200}}>
+          <input className="input" placeholder="اكتب اسماً..." value={q} onChange={e=>setQ(e.target.value)}/>
+        </Field>
+        <Field label="التاريخ" style={{margin:0,minWidth:160}}>
+          <input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)}/>
+        </Field>
+        <button className="btn ghost sm" onClick={()=>{setDate("");setQ("");}}>كل التواريخ</button>
+        <div style={{marginRight:"auto",display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+            <input type="checkbox" checked={autoAtt} onChange={toggleAuto}/>
+            الربط التلقائي بالحضور (للطلاب فقط، أثناء فتح هذه الصفحة)
+          </label>
+        </div>
+      </div>
+
+      {loading ? <div className="card pad">جارٍ التحميل…</div>
+      : !filtered.length ? <div className="card rise"><div className="empty"><div className="big">◆</div>لا توجد سجلات مطابقة.</div></div>
+      : <div className="card"><table className="tbl">
+          <thead><tr><th>الاسم (من الجهاز)</th><th>المطابقة</th><th>الوقت</th><th>التاريخ</th><th>الجهاز</th></tr></thead>
+          <tbody>
+            {filtered.map(l=>(
+              <tr key={l.id}>
+                <td>{l.name||"—"}</td>
+                <td>{l.student
+                  ? <span className="pill present">طالب: {l.student.name}</span>
+                  : l.teacher
+                    ? <span className="pill excused">معلم: {l.teacher.name}</span>
+                    : <span className="pill neutral">غير مطابق</span>}</td>
+                <td>{l.timeISO?fmtTimeSec(l.timeISO):"—"}</td>
+                <td>{l.dateKey?fmtDate(l.dateKey):"—"}</td>
+                <td>{l.deviceId||"—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table></div>}
     </div>
   );
 }
