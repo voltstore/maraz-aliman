@@ -362,6 +362,7 @@ async function createAuthAccount({username,name,role,password,perms}){
 function downloadBridgeConfig({deviceId, deviceIp, devicePort, pollIntervalSeconds, deviceUsername, devicePassword}){
   const cfg = {
     deviceId, deviceIp, devicePort: devicePort||4370, pollIntervalSeconds: pollIntervalSeconds||20,
+    maxAgeDays: 3, fixArabicNames: true,
     deviceUsername, devicePassword,
     firebaseApiKey: FB.apiKey, firebaseAuthDomain: FB.authDomain, firebaseProjectId: FB.projectId,
     firestoreLogsCollection: "fingerprint_logs", firestoreStatusCollection: "bridge_status",
@@ -1180,6 +1181,7 @@ function FingerprintLog({state, commit, user}){
   const [q,setQ]=useState("");
   const [date,setDate]=useState(todayISO());
   const [wizardOpen,setWizardOpen]=useState(false);
+  const [mgrOpen,setMgrOpen]=useState(false);
   const autoAtt = !!(state.meta && state.meta.fingerprintAutoAttendance);
 
   useEffect(()=>{
@@ -1272,9 +1274,13 @@ function FingerprintLog({state, commit, user}){
     <div className="rise">
       <div className="section-head">
         <div><h2>سجل البصمة</h2><p>كل بصمة تُسجَّل تلقائياً من جهاز البصمة (ZK) بالاسم والتاريخ والوقت للثانية، فور حدوثها.</p></div>
-        <button className="btn" onClick={()=>setWizardOpen(v=>!v)}>{wizardOpen?"إخفاء معالج الربط":(configs.length?"⚙ إدارة أجهزة البصمة":"➕ ربط جهاز بصمة جديد")}</button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button className="btn ghost" onClick={()=>setMgrOpen(v=>!v)}>{mgrOpen?"إخفاء إدارة السجلات":"🗑 إدارة السجلات"}</button>
+          <button className="btn" onClick={()=>setWizardOpen(v=>!v)}>{wizardOpen?"إخفاء معالج الربط":(configs.length?"⚙ إدارة أجهزة البصمة":"➕ ربط جهاز بصمة جديد")}</button>
+        </div>
       </div>
 
+      {mgrOpen && <LogsManager toast={toast}/>}
       {wizardOpen && <DeviceWizard configs={configs} devices={devices} user={user} toast={toast}/>}
 
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",marginBottom:16}}>
@@ -1348,6 +1354,86 @@ function FingerprintLog({state, commit, user}){
             ))}
           </tbody>
         </table></div>}
+    </div>
+  );
+}
+
+/* ------ إدارة سجلات البصمة: عدّ وحذف دفعي حسب التاريخ (تنظيف سجلات قديمة/تجريبية) ------ */
+function LogsManager({toast}){
+  const [total,setTotal]=useState(null);
+  const [cutoff,setCutoff]=useState(todayISO());
+  const [matchCount,setMatchCount]=useState(null);
+  const [counting,setCounting]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [progress,setProgress]=useState(0);
+  const [confirm,setConfirm]=useState(null);
+
+  const loadTotal = ()=>{
+    fdb.collection("fingerprint_logs").count().get()
+      .then(s=>setTotal(s.data().count)).catch(()=>setTotal(null));
+  };
+  useEffect(loadTotal,[]);
+
+  const checkCount = async ()=>{
+    setCounting(true); setMatchCount(null);
+    try{
+      const s = await fdb.collection("fingerprint_logs").where("dateKey","<",cutoff).count().get();
+      setMatchCount(s.data().count);
+    }catch(e){ toast("تعذّر حساب العدد","err"); }
+    finally{ setCounting(false); }
+  };
+
+  const runDelete = async (whereBefore)=>{
+    setBusy(true); setProgress(0);
+    try{
+      let deleted=0;
+      while(true){
+        let q = fdb.collection("fingerprint_logs").limit(400);
+        if(whereBefore) q = fdb.collection("fingerprint_logs").where("dateKey","<",whereBefore).limit(400);
+        const snap = await q.get();
+        if(snap.empty) break;
+        const batch = fdb.batch();
+        snap.docs.forEach(d=>batch.delete(d.ref));
+        await batch.commit();
+        deleted += snap.docs.length;
+        setProgress(deleted);
+        if(snap.docs.length<400) break;
+      }
+      toast(`تم حذف ${deleted} سجل`,"err");
+      setMatchCount(null); loadTotal();
+    }catch(e){ toast("حدث خطأ أثناء الحذف: "+e.message,"err"); }
+    finally{ setBusy(false); }
+  };
+
+  return (
+    <div className="card pad" style={{marginBottom:16}}>
+      <h3 style={{marginTop:0}}>إدارة سجلات البصمة</h3>
+      <p style={{color:"var(--ink-soft)",fontSize:13.5,marginTop:0}}>احذف سجلات قديمة أو تجريبية بدون ما تأثّر على تشغيل الجسر — الحذف هنا لا يمسح أي شيء من ذاكرة جهاز البصمة نفسه، فقط من قاعدة بيانات الموقع.</p>
+
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",marginBottom:16}}>
+        <Stat k="إجمالي السجلات المخزَّنة" v={total==null?"...":total} glyph="▦" foot="بقاعدة البيانات كاملة"/>
+      </div>
+
+      {busy
+        ? <div className="banner info"><span>◉</span><div>جارٍ الحذف... تم حذف {progress} سجل حتى الآن. لا تغلق الصفحة.</div></div>
+        : <>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end",marginBottom:10}}>
+              <Field label="احذف كل السجلات قبل هذا التاريخ" style={{margin:0,minWidth:200}}>
+                <input className="input" type="date" value={cutoff} onChange={e=>{setCutoff(e.target.value);setMatchCount(null);}}/>
+              </Field>
+              <button className="btn ghost" disabled={counting} onClick={checkCount}>{counting?"جارٍ الحساب…":"احسب العدد"}</button>
+              {matchCount!=null &&
+                <button className="btn danger" onClick={()=>setConfirm({
+                  text:`حذف ${matchCount} سجل (كل ما هو قبل ${fmtDate(cutoff)})؟ لا يمكن التراجع.`,
+                  onYes:()=>runDelete(cutoff)})}>احذف {matchCount} سجل</button>}
+            </div>
+            <div style={{borderTop:"1px solid var(--line)",margin:"14px 0"}}/>
+            <button className="btn danger" onClick={()=>setConfirm({
+              text:`حذف كل سجلات البصمة بلا استثناء (${total==null?"":total} سجل)؟ لا يمكن التراجع، وسيبدأ السجل من الصفر.`,
+              onYes:()=>runDelete(null)})}>حذف كل السجلات نهائياً</button>
+          </>}
+
+      {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
     </div>
   );
 }

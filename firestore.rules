@@ -48,12 +48,13 @@ service cloud.firestore {
 
     // سجلات جهاز البصمة: يكتبها فقط حساب "جهاز بصمة" (برنامج الجسر). الكادر يقرأ فقط،
     // ويقدر يبدّل حقلي applied/appliedAt عند الربط التلقائي بالحضور — لا شيء غير ذلك.
+    // الحذف محصور بالمدير/الوكيل فقط (تنظيف سجلات قديمة).
     match /fingerprint_logs/{logId} {
       allow read:          if isStaff();
       allow create, update: if isDevice()
                             || (isStaff()
                                 && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['applied','appliedAt']));
-      allow delete: if false;
+      allow delete: if isOps();
     }
 
     // حالة اتصال جهاز/أجهزة البصمة (نبضة حياة من الجسر)
