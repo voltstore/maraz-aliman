@@ -410,6 +410,17 @@ const DEFAULT_STATE = {
 const nowISO = () => new Date().toISOString();
 const fmtTime = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit"}).format(new Date(iso)); }catch(e){ return ""; } };
 const fmtTimeSec = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit",second:"2-digit"}).format(new Date(iso)); }catch(e){ return ""; } };
+const fmtDuration = ms => {
+  if(ms==null || ms<0) return "—";
+  const s = Math.floor(ms/1000);
+  if(s<60) return "أقل من دقيقة";
+  const m = Math.floor(s/60);
+  if(m<60) return `${m} د`;
+  const h = Math.floor(m/60);
+  if(h<24) return `${h} س ${m%60} د`;
+  const d = Math.floor(h/24);
+  return `${d} يوم ${h%24} س`;
+};
 const normalizeName = s => (s||"").toString()
   .replace(/[ً-ْٰ]/g,"")       // إزالة التشكيل
   .replace(/[أإآ]/g,"ا").replace(/ى/g,"ي")    // توحيد صور الألف والياء
@@ -1274,6 +1285,33 @@ function FingerprintLog({state, commit, user}){
 
       {!devices.length && !wizardOpen && <div className="banner warn">⚠ ما وصل أي بصمة بعد. اضغط «➕ ربط جهاز بصمة جديد» أعلاه وتابع الخطوات.</div>}
 
+      {!!devices.length && <div className="card pad" style={{marginBottom:16}}>
+        <div className="eyebrow" style={{marginBottom:10}}>استقرار الاتصال</div>
+        <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12}}>
+          {devices.map(d=>{
+            const now=Date.now();
+            const seen = d.lastSeen && d.lastSeen.toDate ? d.lastSeen.toDate() : null;
+            const online = !!(seen && (now-seen.getTime())<60000);
+            const since = d.connectedSince && d.connectedSince.toDate ? d.connectedSince.toDate() : null;
+            const lastLog = d.lastLogAt && d.lastLogAt.toDate ? d.lastLogAt.toDate() : null;
+            const hasErr = online && d.lastError;
+            const status = !online ? {label:"غير متصل",cls:"absent"} : hasErr ? {label:"متصل — غير مستقر",cls:"late"} : {label:"متصل ومستقر",cls:"present"};
+            return <div key={d.id} style={{border:"1px solid var(--line)",borderRadius:12,padding:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <b style={{fontSize:14.5}}>{d.id}</b>
+                <span className={"pill "+status.cls}>{status.label}</span>
+              </div>
+              <div style={{fontSize:12.5,color:"var(--ink-soft)",lineHeight:1.9}}>
+                {online && since && <div>متصل منذ: {fmtDuration(now-since.getTime())}</div>}
+                <div>آخر نبضة: {seen?fmtDuration(now-seen.getTime())+" مضت":"—"}</div>
+                <div>آخر بصمة استُقبلت: {lastLog?fmtDuration(now-lastLog.getTime())+" مضت":"لا توجد بعد"}</div>
+                {hasErr && <div style={{color:"var(--danger)"}}>⚠ آخر خطأ: {String(d.lastError).slice(0,80)}</div>}
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>}
+
       <div className="card pad" style={{marginBottom:16,display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end"}}>
         <Field label="بحث بالاسم" style={{margin:0,minWidth:200}}>
           <input className="input" placeholder="اكتب اسماً..." value={q} onChange={e=>setQ(e.target.value)}/>
@@ -1391,7 +1429,10 @@ function DeviceWizard({configs, devices, user, toast}){
 
   return (
     <div className="card pad" style={{marginBottom:16}}>
-      <h3 style={{marginTop:0}}>ربط جهاز بصمة — خطوة بخطوة</h3>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+        <h3 style={{margin:0}}>ربط جهاز بصمة — خطوة بخطوة</h3>
+        <a className="btn ghost sm" href="bridge-guide.html" target="_blank" rel="noreferrer">📄 دليل مبسّط (اطبعه أو أرسله لغير التقنيين)</a>
+      </div>
       <ol style={{lineHeight:1.9,paddingRight:20,fontSize:14,marginTop:8}}>
         <li>من قائمة جهاز البصمة نفسه: <b>Menu ← Comm. (الاتصال) ← Ethernet</b> — دوّن عنوان الـ IP الظاهر.</li>
         <li>تأكد إن الكمبيوتر اللي راح يشغّل برنامج الربط متصل بنفس شبكة المدرسة (نفس الراوتر).</li>

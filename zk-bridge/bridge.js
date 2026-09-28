@@ -141,6 +141,7 @@ let usersMap = new Map(); // deviceUserId -> name
 let zk = null;
 let connected = false;
 let lastLogAt = null;
+let connectedSince = null;
 
 /* --------------------------------------------------------- توحيد شكل السجلات */
 // يحاول التعامل مع اختلاف أسماء الحقول بين إصدارات مكتبة node-zklib
@@ -191,6 +192,7 @@ async function pushHeartbeat(extra) {
       online: !!connected,
       lastSeen: new Date(),
       lastLogAt: lastLogAt || null,
+      connectedSince: connected ? connectedSince : null,
       ...extra,
     });
   } catch (e) {
@@ -250,9 +252,10 @@ async function connectDevice() {
   zk = new ZKLib(DEVICE_IP, DEVICE_PORT, 10000, 4000);
   await zk.createSocket();
   connected = true;
+  connectedSince = new Date();
   log("✅ تم الاتصال بجهاز البصمة بنجاح.");
   await refreshUsers();
-  await pushHeartbeat();
+  await pushHeartbeat({ lastError: null }); // نظّف أي خطأ قديم من محاولة اتصال سابقة فاشلة
 
   // الاستماع اللحظي (فوري) لأي بصمة جديدة — إن كانت المكتبة/الجهاز يدعمانها
   try {
@@ -272,6 +275,7 @@ async function connectDevice() {
 
 async function disconnectDevice() {
   connected = false;
+  connectedSince = null;
   try { if (zk) await zk.disconnect(); } catch (e) { /* تجاهل */ }
 }
 
