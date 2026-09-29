@@ -378,8 +378,13 @@ function downloadBridgeConfig({deviceId, deviceIp, devicePort, pollIntervalSecon
 const uid = () => Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-3);
 const todayISO = () => new Date().toISOString().slice(0,10);
 const WEEKDAYS = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"];
+const SCHOOL_DAYS = ["الأحد","الاثنين","الثلاثاء","الأربعاء","الخميس"]; // أيام الأسبوع الدراسي (0-4)
+const shortName = full => (full||"").trim().split(/\s+/)[0] || full;
 const weekdayOf = iso => WEEKDAYS[new Date(iso+"T00:00:00").getDay()];
-const fmtDate = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{day:"numeric",month:"long",year:"numeric"}).format(new Date(iso+"T00:00:00")); }catch(e){ return iso; } };
+// التقويم الهجري (أم القرى) هو المعروض بكل الموقع — التخزين الداخلي يبقى ميلادياً (ضروري
+// للفرز والمقارنة وربط بيانات الحضور)، لكن أي تاريخ يظهر للمستخدم يُحوَّل هجرياً هنا مركزياً.
+const fmtDate = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura-nu-latn",{day:"numeric",month:"long",year:"numeric"}).format(new Date(iso+"T00:00:00")); }catch(e){ return iso; } };
+const fmtDateShort = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura-nu-latn",{day:"numeric",month:"numeric",year:"numeric"}).format(new Date(iso+"T00:00:00")); }catch(e){ return iso; } };
 
 const SUBJECTS = [
   "التقنية الرقمية","التربية الصحية والبدنية","اللغة الإنجليزية","التفكير الناقد",
@@ -404,12 +409,23 @@ const DEFAULT_STATE = {
   attendance:{},        // { 'YYYY-MM-DD': { studentId: 'present'|'absent'|'late'|'excused' } }
   attMeta:{},           // { 'YYYY-MM-DD': { studentId: ISOدateTime لوقت التسجيل } }
   records:[],           // [ {id, studentId, kind:'note'|'incident', date, at, by, byName, text, severity} ]
-  examSchedules:{},      // { sectionNumber: [ {id,date,subject,time} ] }
-  // [ {id, number, date, venue, entries:[{section,subject}], studentIds:[], seating:[{studentId,section,seat:'A'|'B',table}], approved, auto} ]
+  examSchedules:{},      // { sectionNumber: [ {id,date,subject,time,durationMinutes} ] }
+  // [ {id, number, date, venue, entries:[{section,subject}], studentIds:[], seating:[{studentId,section,seat:'A'|'B',num}], approved, auto, proctorIds:[teacherId,teacherId]} ]
   committees:[],
+  classTimetable:{},     // { sectionNumber: { day(0-4، الأحد-الخميس): { period(1..N): {subject,teacherId} } } }
+  timetableMeta:{periodsPerDay:7},
 };
 const nowISO = () => new Date().toISOString();
 const fmtTime = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit"}).format(new Date(iso)); }catch(e){ return ""; } };
+// يحسب وقت الانصراف (نهاية الاختبار) من وقت البدء "HH:MM" ومدة الاختبار بالدقائق
+const addMinutes = (hhmm, mins) => {
+  const [h,m] = (hhmm||"08:00").split(":").map(Number);
+  let total = h*60+m+(+mins||0);
+  total = ((total%1440)+1440)%1440;
+  const eh=Math.floor(total/60), em=total%60;
+  return String(eh).padStart(2,"0")+":"+String(em).padStart(2,"0");
+};
+const fmtHM = hhmm => { try{ const [h,m]=hhmm.split(":").map(Number); return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit"}).format(new Date(2000,0,1,h,m)); }catch(e){ return hhmm; } };
 const fmtTimeSec = iso => { try{ return new Intl.DateTimeFormat("ar-SA-u-nu-latn",{hour:"2-digit",minute:"2-digit",second:"2-digit"}).format(new Date(iso)); }catch(e){ return ""; } };
 const fmtDuration = ms => {
   if(ms==null || ms<0) return "—";
@@ -638,6 +654,7 @@ const NAV = [
   {sep:"الإدارة"},
   {id:"students", label:"الطلاب", ic:"◉", roles:["manager","deputy","teacher"], show:u=>can(u,"students")||can(u,"transfer")},
   {id:"teachers", label:"المعلمون", ic:"✎", roles:["manager","deputy"]},
+  {id:"timetable", label:"الجدول الدراسي", ic:"▥", roles:["manager","deputy","teacher"]},
   {sep:"الاختبارات"},
   {id:"schedule", label:"جدول الاختبارات", ic:"▤", roles:["manager","deputy"]},
   {id:"committees", label:"لجان الاختبارات", ic:"⬚", roles:["manager","deputy","teacher"], cap:"committees"},
@@ -682,6 +699,7 @@ function Shell({state, commit, user, onLogout, onUserUpdate}){
     monitor:<Monitor state={state}/>,
     students:<Students state={state} commit={commit} user={user}/>,
     teachers:<Teachers state={state} commit={commit}/>,
+    timetable:<ClassTimetable state={state} commit={commit} user={user}/>,
     schedule:<Schedule state={state} commit={commit}/>,
     committees:<Committees state={state} commit={commit}/>,
     profile:<Profile user={user} commit={commit} onUserUpdate={onUserUpdate}/>,
@@ -2000,6 +2018,129 @@ function TeacherForm({mode,teacher,secs,grades,onClose,onSave}){
   );
 }
 
+/* ========================= الجدول الدراسي الأسبوعي (جدول الحصص) ========================= */
+// يفحص هل معلّم معيّن عنده حصة بشعبة أخرى بنفس اليوم/الحصة (تعارض جدول)
+function timetableConflict(classTimetable, day, period, teacherId, excludeSection){
+  for(const secKey of Object.keys(classTimetable||{})){
+    if(+secKey===+excludeSection) continue;
+    const cell = classTimetable[secKey]?.[day]?.[period];
+    if(cell && cell.teacherId===teacherId) return +secKey;
+  }
+  return null;
+}
+
+function ClassTimetable({state, commit, user}){
+  const toast=useToast();
+  const {teachers, grades, meta}=state;
+  const secs=sectionsRange(meta.sectionsCount);
+  const [sec,setSec]=useState(secs[0]);
+  const [cellEdit,setCellEdit]=useState(null); // {day,period}
+  const mayEdit = user.role==="manager"||user.role==="deputy";
+  const periodsPerDay = (state.timetableMeta||{}).periodsPerDay||7;
+  const periods = Array.from({length:periodsPerDay},(_,i)=>i+1);
+  const grid = (state.classTimetable||{})[sec]||{};
+
+  const setPeriods = n=>commit(p=>({...p, timetableMeta:{...p.timetableMeta, periodsPerDay:Math.max(1,Math.min(12,+n||7))}}));
+
+  const saveCell=(day,period,data)=>{
+    if(data && data.teacherId){
+      const clash = timetableConflict(state.classTimetable, day, period, data.teacherId, sec);
+      if(clash!=null){
+        toast(`هذا المعلّم عنده حصة بشعبة ${clash} بنفس اليوم والحصة`,"err");
+        return false;
+      }
+    }
+    commit(p=>{
+      const ct={...p.classTimetable};
+      const secGrid={...(ct[sec]||{})};
+      const dayGrid={...(secGrid[day]||{})};
+      if(data) dayGrid[period]=data; else delete dayGrid[period];
+      secGrid[day]=dayGrid; ct[sec]=secGrid;
+      return {...p, classTimetable:ct};
+    });
+    return true;
+  };
+
+  return (
+    <div className="rise">
+      <div className="section-head">
+        <div><h2>الجدول الدراسي</h2><p>جدول حصص أسبوعي لكل شعبة — يمنع تلقائياً تعارض المعلّم بين شعبتين بنفس الوقت.</p></div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button className="btn ghost" onClick={()=>printClassTimetable(sec,state)}>تصدير PDF</button>
+        </div>
+      </div>
+
+      <div className="card pad" style={{marginBottom:16,display:"flex",gap:14,flexWrap:"wrap",alignItems:"flex-end"}}>
+        <Field label="الشعبة" style={{margin:0,minWidth:220}}>
+          <select className="input" value={sec} onChange={e=>setSec(+e.target.value)}>
+            {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,grades)}</option>)}
+          </select>
+        </Field>
+        {mayEdit && <Field label="عدد الحصص باليوم" style={{margin:0,minWidth:150}}>
+          <input className="input" type="number" min="1" max="12" value={periodsPerDay} onChange={e=>setPeriods(e.target.value)}/>
+        </Field>}
+      </div>
+
+      <div className="card" style={{overflowX:"auto"}}>
+        <table className="tbl">
+          <thead><tr><th style={{width:70}}>الحصة</th>{SCHOOL_DAYS.map((d,i)=><th key={i}>{d}</th>)}</tr></thead>
+          <tbody>
+            {periods.map(period=><tr key={period}>
+              <td style={{fontWeight:700,color:"var(--brand-deep)"}}>{period}</td>
+              {SCHOOL_DAYS.map((d,day)=>{
+                const cell = grid[day]?.[period];
+                const teacher = cell && teachers.find(t=>t.id===cell.teacherId);
+                return <td key={day} style={{cursor:mayEdit?"pointer":"default",minWidth:110}}
+                  onClick={()=>mayEdit && setCellEdit({day,period})}>
+                  {cell ? <div>
+                      <div style={{fontWeight:600,fontSize:13}}>{cell.subject}</div>
+                      <div style={{fontSize:11.5,color:"var(--ink-soft)"}}>{teacher?shortName(teacher.name):"—"}</div>
+                    </div>
+                    : <span style={{color:"var(--ink-faint)",fontSize:12}}>{mayEdit?"+ إضافة":"—"}</span>}
+                </td>;
+              })}
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+
+      {cellEdit && <TimetableCellModal
+        state={state} section={sec} day={cellEdit.day} period={cellEdit.period}
+        current={grid[cellEdit.day]?.[cellEdit.period]}
+        onClose={()=>setCellEdit(null)}
+        onSave={(data)=>{ if(saveCell(cellEdit.day,cellEdit.period,data)) setCellEdit(null); }}
+      />}
+    </div>
+  );
+}
+
+function TimetableCellModal({state, section, day, period, current, onClose, onSave}){
+  const {teachers, grades}=state;
+  const [subject,setSubject]=useState(current?.subject||SUBJECTS[0]);
+  const [teacherId,setTeacherId]=useState(current?.teacherId||"");
+  const eligible = teachers.filter(t=>(t.subjects||[]).includes(subject));
+  return (
+    <Modal title={`${SCHOOL_DAYS[day]} — الحصة ${period} — شعبة ${section}`} onClose={onClose}
+      foot={<>
+        <button className="btn" disabled={!teacherId} onClick={()=>onSave({subject,teacherId})}>حفظ</button>
+        {current && <button className="btn danger" onClick={()=>onSave(null)}>حذف الحصة</button>}
+        <button className="btn ghost" onClick={onClose}>إلغاء</button>
+      </>}>
+      <Field label="المادة">
+        <select className="input" value={subject} onChange={e=>{setSubject(e.target.value);setTeacherId("");}}>
+          {SUBJECTS.map(s=><option key={s}>{s}</option>)}
+        </select>
+      </Field>
+      <Field label="المعلّم" hint={!eligible.length?"لا يوجد معلّم مربوط بهذه المادة — أضفه من صفحة المعلّمين":undefined}>
+        <select className="input" value={teacherId} onChange={e=>setTeacherId(e.target.value)}>
+          <option value="">— اختر —</option>
+          {eligible.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </Field>
+    </Modal>
+  );
+}
+
 /* ========================= EXAM SCHEDULE ========================= */
 function Schedule({state, commit}){
   const toast=useToast();
@@ -2009,7 +2150,7 @@ function Schedule({state, commit}){
   const rows=(state.examSchedules[sec]||[]).slice().sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
 
   const add=()=>{
-    const row={id:uid(),date:todayISO(),subject:SUBJECTS[0],time:"08:00"};
+    const row={id:uid(),date:todayISO(),subject:SUBJECTS[0],time:"08:00",durationMinutes:90};
     commit(p=>({...p,examSchedules:{...p.examSchedules,[sec]:[...(p.examSchedules[sec]||[]),row]}}));
   };
   const upd=(id,patch)=>commit(p=>({...p,examSchedules:{...p.examSchedules,[sec]:(p.examSchedules[sec]||[]).map(r=>r.id===id?{...r,...patch}:r)}}));
@@ -2046,11 +2187,13 @@ function Schedule({state, commit}){
       {rows.length===0
         ? <div className="card"><div className="empty"><div className="big">▤</div>لا توجد اختبارات مجدولة لهذه الشعبة.</div></div>
         : <div className="card"><table className="tbl">
-            <thead><tr><th>اليوم</th><th>التاريخ</th><th>الوقت</th><th>المادة</th><th style={{width:1}}></th></tr></thead>
+            <thead><tr><th>اليوم</th><th>التاريخ</th><th>وقت البدء</th><th>المدة (د)</th><th>وقت الانصراف</th><th>المادة</th><th style={{width:1}}></th></tr></thead>
             <tbody>{rows.map(r=><tr key={r.id}>
               <td>{weekdayOf(r.date)}</td>
               <td><input className="input" style={{padding:"6px 8px"}} type="date" value={r.date} onChange={e=>upd(r.id,{date:e.target.value})}/></td>
               <td><input className="input" style={{padding:"6px 8px",width:110}} type="time" value={r.time} onChange={e=>upd(r.id,{time:e.target.value})}/></td>
+              <td><input className="input" style={{padding:"6px 8px",width:80}} type="number" min="10" step="5" value={r.durationMinutes||90} onChange={e=>upd(r.id,{durationMinutes:Math.max(10,+e.target.value||90)})}/></td>
+              <td style={{fontWeight:600,color:"var(--brand-deep)"}}>{fmtHM(addMinutes(r.time,r.durationMinutes||90))}</td>
               <td><select className="input" style={{padding:"6px 8px"}} value={r.subject} onChange={e=>upd(r.id,{subject:e.target.value})}>
                 {SUBJECTS.map(s=><option key={s}>{s}</option>)}</select></td>
               <td><button className="btn danger sm" onClick={()=>del(r.id)}>حذف</button></td>
@@ -2083,7 +2226,9 @@ function Committees({state, commit}){
   const [auto,setAuto]=useState(false);
   const [verify,setVerify]=useState(false);
   const [confirm,setConfirm]=useState(null);
-  const {committees,students,grades}=state;
+  const [proctorFor,setProctorFor]=useState(null); // اللجنة اللي نعيّن مراقبيها الحين
+  const [secRoster,setSecRoster]=useState(false);
+  const {committees,students,grades,teachers}=state;
 
   // طالب يُعتبر "مشغولاً" فقط إذا كان بلجنة بنفس تاريخ اللجنة الجديدة (يقدر يكون بلجان مختلفة بأيام مختلفة)
   const assignedOn = date => {
@@ -2120,6 +2265,7 @@ function Committees({state, commit}){
         <div><h2>لجان الاختبارات</h2><p>كوّن لجاناً تجمع أكثر من شعبة وصف، يدوياً أو تلقائياً — بترقيم جلوس A/B يمنع تجاور طلاب نفس الصف.</p></div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button className="btn ghost" onClick={()=>setVerify(true)} disabled={!committees.length}>تحقّق من اللجان</button>
+          <button className="btn ghost" onClick={()=>setSecRoster(true)} disabled={!committees.length}>📋 كشف توزيع شعبة</button>
           <button className="btn ghost" onClick={()=>setAuto(true)}>⚡ تكوين لجان تلقائي</button>
           <button className="btn" onClick={()=>setForm(true)}>+ تكوين لجنة</button>
         </div>
@@ -2152,8 +2298,12 @@ function Committees({state, commit}){
                     <div key={i}>شعبة {e.section} <span style={{color:"var(--ink-faint)"}}>({gradeName(e.section,grades)})</span>
                       {" — "}{e.subject||"بدون مادة"} — {perSection[e.section]||0} طالب</div>)}
                 </div>
-                <div style={{display:"flex",gap:8,marginTop:14}}>
+                <div style={{marginTop:10,fontSize:12.5,color:"var(--ink-soft)"}}>
+                  المراقبان: {(c.proctorIds||[]).filter(Boolean).map(id=>(teachers.find(t=>t.id===id)||{}).name).join(" · ")||"لم يُعيَّنوا بعد"}
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
                   <button className="btn sm" onClick={()=>printCommittee(c,state)}>تصدير كشف مناداة</button>
+                  <button className="btn ghost sm" onClick={()=>setProctorFor(c)}>تعيين المراقبين</button>
                   <button className="btn danger sm" onClick={()=>setConfirm({text:`حذف اللجنة رقم ${c.number}؟ سيعود طلابها متاحين.`,onYes:()=>remove(c)})}>حذف</button>
                 </div>
               </div>;
@@ -2163,8 +2313,127 @@ function Committees({state, commit}){
       {form && <CommitteeForm state={state} assignedOn={assignedOn} onClose={()=>setForm(false)} onCreate={create}/>}
       {auto && <AutoCommitteeModal state={state} assignedOn={assignedOn} onClose={()=>setAuto(false)} onCreateBatch={createBatch}/>}
       {verify && <VerifyModal state={state} onClose={()=>setVerify(false)}/>}
+      {proctorFor && <ProctorModal state={state} committee={proctorFor} commit={commit} onClose={()=>setProctorFor(null)}/>}
+      {secRoster && <SectionRosterModal state={state} onClose={()=>setSecRoster(false)}/>}
       {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
     </div>
+  );
+}
+
+// يحسب المواد اللي فيها اختبار بتاريخ معيّن (عبر كل الشُّعب) — لاستبعاد معلّميها من المراقبة
+function subjectsExaminedOn(examSchedules, date){
+  const set=new Set();
+  Object.values(examSchedules||{}).forEach(rows=>(rows||[]).forEach(r=>{ if(r.date===date) set.add(r.subject); }));
+  return set;
+}
+// المعلّمون المُعيَّنون كمراقبين بلجان أخرى بنفس التاريخ (لمنع ازدواج المراقبة)
+function proctorsBusyOn(committees, date, excludeId){
+  const set=new Set();
+  committees.forEach(c=>{ if(c.date===date && c.id!==excludeId) (c.proctorIds||[]).forEach(id=>id&&set.add(id)); });
+  return set;
+}
+
+function ProctorModal({state, committee, commit, onClose}){
+  const toast=useToast();
+  const {teachers, examSchedules, committees}=state;
+  const [p1,setP1]=useState((committee.proctorIds||[])[0]||"");
+  const [p2,setP2]=useState((committee.proctorIds||[])[1]||"");
+
+  const busySubjects = subjectsExaminedOn(examSchedules, committee.date);
+  const busyProctors = proctorsBusyOn(committees, committee.date, committee.id);
+  const isEligible = t => !(t.subjects||[]).some(s=>busySubjects.has(s)) && !busyProctors.has(t.id);
+  // نسمح دائماً بإبقاء المعلّم المعيَّن حالياً بالقائمة حتى لو صار غير مؤهّل بعد تغيّر الجدول
+  const options = id => teachers.filter(t=>isEligible(t) || t.id===id);
+
+  const reasonBlocked = t => {
+    if(busyProctors.has(t.id)) return "مراقب بلجنة أخرى بنفس اليوم";
+    const clash=(t.subjects||[]).find(s=>busySubjects.has(s));
+    if(clash) return `مادته (${clash}) لها اختبار بنفس اليوم`;
+    return null;
+  };
+
+  const save=()=>{
+    if(p1 && p1===p2){ toast("لازم يكونون معلّمين مختلفين","err"); return; }
+    commit(prev=>({...prev, committees: prev.committees.map(c=>c.id===committee.id?{...c, proctorIds:[p1||null,p2||null]}:c)}));
+    toast("تم حفظ المراقبين"); onClose();
+  };
+
+  return (
+    <Modal title={`تعيين المراقبين — لجنة رقم ${committee.number}`} onClose={onClose}
+      foot={<><button className="btn" onClick={save}>حفظ</button><button className="btn ghost" onClick={onClose}>إلغاء</button></>}>
+      <div className="banner info" style={{marginBottom:16}}>
+        <span>◉</span><div>القائمة تستبعد تلقائياً أي معلّم مادته لها اختبار بنفس اليوم ({committee.date?fmtDate(committee.date):"—"})، أو معيَّن كمراقب بلجنة أخرى بنفس اليوم.</div>
+      </div>
+      <Field label="المراقب الأول">
+        <select className="input" value={p1} onChange={e=>setP1(e.target.value)}>
+          <option value="">— بدون —</option>
+          {options(p1).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </Field>
+      <Field label="المراقب الثاني">
+        <select className="input" value={p2} onChange={e=>setP2(e.target.value)}>
+          <option value="">— بدون —</option>
+          {options(p2).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </Field>
+      <div className="hint" style={{marginTop:4}}>معلّمون مستبعَدون حالياً: {teachers.filter(t=>reasonBlocked(t)).map(t=>`${t.name} (${reasonBlocked(t)})`).join("، ")||"لا أحد"}</div>
+    </Modal>
+  );
+}
+
+function SectionRosterModal({state, onClose}){
+  const toast=useToast();
+  const {students, committees, meta, grades}=state;
+  const secs=sectionsRange(meta.sectionsCount);
+  const dates=[...new Set(committees.map(c=>c.date).filter(Boolean))].sort();
+  const [sec,setSec]=useState(secs[0]);
+  const [date,setDate]=useState(dates[dates.length-1]||"");
+
+  const rows = useMemo(()=>{
+    const roster = students.filter(s=>s.section===+sec);
+    return roster.map(s=>{
+      const c = committees.find(c=>c.date===date && c.studentIds.includes(s.id));
+      const seat = c ? (c.seating||[]).find(x=>x.studentId===s.id) : null;
+      return {student:s, committee:c, seat};
+    }).sort((a,b)=>a.student.name.localeCompare(b.student.name,"ar"));
+  },[students, committees, sec, date]);
+
+  const assignedCount = rows.filter(r=>r.committee).length;
+
+  return (
+    <Modal title="كشف توزيع شعبة" onClose={onClose} wide
+      foot={<>
+        <button className="btn accent" disabled={!rows.length} onClick={()=>{ printSectionRoster(+sec, date, rows, state); }}>تصدير الكشف</button>
+        <button className="btn ghost" onClick={onClose}>إغلاق</button>
+      </>}>
+      <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14,marginBottom:14}}>
+        <Field label="الشعبة" style={{margin:0}}>
+          <select className="input" value={sec} onChange={e=>setSec(+e.target.value)}>
+            {secs.map(n=><option key={n} value={n}>شعبة {n} — {gradeName(n,grades)}</option>)}
+          </select>
+        </Field>
+        <Field label="تاريخ الاختبار" style={{margin:0}}>
+          <select className="input" value={date} onChange={e=>setDate(e.target.value)}>
+            <option value="">— اختر —</option>
+            {dates.map(d=><option key={d} value={d}>{fmtDate(d)}</option>)}
+          </select>
+        </Field>
+      </div>
+      {!date
+        ? <div className="banner warn">⚠ اختر تاريخ اختبار فيه لجان مُكوَّنة.</div>
+        : <>
+            <div className="banner info" style={{marginBottom:12}}><span>◉</span><div>موزَّعون على لجان: <b>{assignedCount}</b> من {rows.length} طالب بالشعبة.</div></div>
+            <div className="card"><table className="tbl">
+              <thead><tr><th>اسم الطالب</th><th>رقم اللجنة</th><th>مقر الاختبار</th><th>رقم الجلوس</th></tr></thead>
+              <tbody>{rows.map(r=><tr key={r.student.id}>
+                <td className="name" style={{textAlign:"right",fontWeight:600}}>{r.student.name}</td>
+                <td>{r.committee?r.committee.number:"—"}</td>
+                <td>{r.committee?r.committee.venue||"—":"—"}</td>
+                <td>{r.seat?r.seat.seat+r.seat.num:"—"}</td>
+              </tr>)}</tbody>
+            </table></div>
+          </>}
+    </Modal>
   );
 }
 
@@ -2530,7 +2799,7 @@ function openPrint(title, innerHTML){
 }
 
 function printCommittee(c, state){
-  const {students,grades,meta}=state;
+  const {students,grades,meta,teachers}=state;
   const seatOf = id => (c.seating||[]).find(x=>x.studentId===id);
   const list = c.studentIds
     .map(id=>({stu:students.find(s=>s.id===id), seat:seatOf(id)}))
@@ -2559,20 +2828,59 @@ function printCommittee(c, state){
       ])
     + `<div class="subtitle" style="margin:2px 0 10px">${entriesLine}</div>`
     + tableHtml
-    + printSigns(["المراقب الأول","المراقب الثاني"])
+    + printSigns([
+        "المراقب الأول"+(((teachers||[]).find(t=>t.id===(c.proctorIds||[])[0])||{}).name?" — "+(teachers.find(t=>t.id===c.proctorIds[0])||{}).name:""),
+        "المراقب الثاني"+(((teachers||[]).find(t=>t.id===(c.proctorIds||[])[1])||{}).name?" — "+(teachers.find(t=>t.id===c.proctorIds[1])||{}).name:""),
+      ])
     + printFoot(meta.schoolName);
   openPrint("كشف مناداة - لجنة "+c.number, inner);
 }
 
+function printClassTimetable(section, state){
+  const {grades,meta,teachers,classTimetable,timetableMeta}=state;
+  const grid=(classTimetable||{})[section]||{};
+  const periodsPerDay=(timetableMeta||{}).periodsPerDay||7;
+  const periods=Array.from({length:periodsPerDay},(_,i)=>i+1);
+  const nameOf = id => { const t=teachers.find(x=>x.id===id); return t?shortName(t.name):""; };
+  const headCols = SCHOOL_DAYS.map(d=>`<th>${esc(d)}</th>`).join("");
+  const bodyRows = periods.map(p=>{
+    const cells = SCHOOL_DAYS.map((d,day)=>{
+      const cell = grid[day]?.[p];
+      return `<td>${cell?`<b>${esc(cell.subject)}</b><br/><span style="font-size:11px;color:#55647d">${esc(nameOf(cell.teacherId))}</span>`:""}</td>`;
+    }).join("");
+    return `<tr><td style="font-weight:700;color:#1e4fa3">${p}</td>${cells}</tr>`;
+  }).join("");
+  const inner = printHead({schoolName:meta.schoolName, title:"الجدول الدراسي الأسبوعي", subtitle:`شعبة ${section} — ${gradeName(section,grades)}`, badge:{k:"الشعبة", v:section}})
+    + `<table class="tbl"><thead><tr><th style="width:60px">الحصة</th>${headCols}</tr></thead><tbody>${bodyRows}</tbody></table>`
+    + printSigns(["وكيل الشؤون","مدير الثانوية"])
+    + printFoot(meta.schoolName);
+  openPrint("الجدول الدراسي - شعبة "+section, inner);
+}
+
 function printSchedule(section, rows, state){
   const {grades,meta}=state;
-  const body=rows.map(r=>`<tr><td>${esc(weekdayOf(r.date))}</td><td>${esc(fmtDate(r.date))}</td><td>${esc(r.time)}</td><td class="name">${esc(r.subject)}</td></tr>`).join("");
+  const body=rows.map(r=>`<tr><td>${esc(weekdayOf(r.date))}</td><td>${esc(fmtDate(r.date))}</td><td>${esc(fmtHM(r.time))}</td><td>${esc(fmtHM(addMinutes(r.time,r.durationMinutes||90)))}</td><td class="name">${esc(r.subject)}</td></tr>`).join("");
   const inner = printHead({schoolName:meta.schoolName, title:"جدول الاختبارات النهائية", subtitle:`شعبة ${section} — ${gradeName(section,grades)}`, badge:{k:"الشعبة", v:section}})
     + printMeta([{k:"الصف", v:gradeName(section,grades)}, {k:"الشعبة", v:"شعبة "+section}, {k:"عدد الاختبارات", v:rows.length}])
-    + `<table class="tbl"><thead><tr><th>اليوم</th><th>التاريخ</th><th>الوقت</th><th>المادة</th></tr></thead><tbody>${body}</tbody></table>`
+    + `<table class="tbl"><thead><tr><th>اليوم</th><th>التاريخ</th><th>وقت البدء</th><th>وقت الانصراف</th><th>المادة</th></tr></thead><tbody>${body}</tbody></table>`
     + printSigns(["وكيل الشؤون","مدير الثانوية"])
     + printFoot(meta.schoolName);
   openPrint("جدول شعبة "+section, inner);
+}
+
+function printSectionRoster(section, date, rows, state){
+  const {grades,meta}=state;
+  const body=rows.map(r=>`<tr><td class="name">${esc(r.student.name)}</td><td>${r.committee?esc(String(r.committee.number)):"—"}</td><td>${r.committee?esc(r.committee.venue||"—"):"—"}</td><td class="seat">${r.seat?esc(r.seat.seat+r.seat.num):"—"}</td></tr>`).join("");
+  const assignedCount = rows.filter(r=>r.committee).length;
+  const inner = printHead({schoolName:meta.schoolName, title:"كشف توزيع طلاب على اللجان", subtitle:`شعبة ${section} — ${gradeName(section,grades)}`, badge:{k:"عدد الطلاب", v:rows.length}})
+    + printMeta([
+        {k:"الشعبة", v:"شعبة "+section},
+        {k:"التاريخ", v:date?fmtDate(date):""},
+        {k:"موزَّعون على لجان", v:assignedCount+" من "+rows.length},
+      ])
+    + `<table class="tbl roster"><thead><tr><th>اسم الطالب</th><th style="width:70px">رقم اللجنة</th><th>مقر الاختبار</th><th style="width:70px">رقم الجلوس</th></tr></thead><tbody>${body}</tbody></table>`
+    + printFoot(meta.schoolName);
+  openPrint("كشف توزيع شعبة "+section, inner);
 }
 
 function printRoster(list, title, state){
