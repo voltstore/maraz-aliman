@@ -481,35 +481,24 @@ const shuffleArr = arr => {
   return a;
 };
 
-// يوزّع الطلاب على مقاعد A/B (طاولات ثنائية) بحيث يتجنّب — قدر الإمكان — وضع طالبين
-// من نفس الصف بجانب بعض على نفس الطاولة (يمين/يسار). التوالي الأمامي/الخلفي غير مقيَّد.
-// خوارزمية جشعة: بكل خطوة نأخذ مقعد A من أكبر مجموعة متبقية، ومقعد B من مجموعة مختلفة
-// إن وُجدت — وهذا يضمن تفادي التكرار ما لم يكن صفّ واحد يشكّل أكثر من نصف الطلاب (حالة يستحيل فيها تفاديه رياضياً).
+// يوزّع الطلاب على عمودي جلوس A و B: الشعبة الأكبر عدداً بالكامل تاخذ عمود A، وكل
+// بقية الطلاب (من الشُّعب الأخرى بالّلجنة، أياً كان عددها) ياخذون عمود B — بحيث لا
+// يجلس طالبان من نفس الشعبة بجانب بعض (يمين/يسار) في نفس الصف من الطاولات. كل عمود
+// مرقّم تسلسلياً من 1 لوحده (A1, A2, ... ثم B1, B2, ...)، والترتيب داخل كل عمود أبجدي.
 function buildSeating(list, grades){
-  const groups = new Map();
+  const bySection = new Map();
   list.forEach(s=>{
-    const g = gradeForSection(s.section, grades);
-    const key = g ? g.id : "_none";
-    if(!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(s);
+    if(!bySection.has(s.section)) bySection.set(s.section, []);
+    bySection.get(s.section).push(s);
   });
-  let buckets = [...groups.entries()].map(([gid,arr])=>({gid, arr: shuffleArr(arr)}));
-  const pairs = [];
-  while(buckets.some(b=>b.arr.length)){
-    buckets = buckets.filter(b=>b.arr.length).sort((a,b)=>b.arr.length-a.arr.length);
-    const first = buckets[0];
-    const a = first.arr.shift();
-    const otherIdx = buckets.findIndex((b,i)=>i>0 && b.arr.length);
-    let b = null;
-    if(otherIdx>=0){ b = buckets[otherIdx].arr.shift(); }
-    else if(first.arr.length){ b = first.arr.shift(); } // لا مفر من تكرار نفس الصف هنا
-    pairs.push([a,b]);
-  }
+  const groups = [...bySection.entries()].sort((a,b)=>b[1].length-a[1].length);
+  const majority = groups.length ? groups[0][1] : [];
+  const minority = groups.slice(1).flatMap(([,arr])=>arr);
+  const byName = (a,b)=>a.name.localeCompare(b.name,"ar");
+  majority.sort(byName); minority.sort(byName);
   const seating = [];
-  pairs.forEach((pair,i)=>{
-    seating.push({studentId:pair[0].id, section:pair[0].section, seat:"A", table:i+1});
-    if(pair[1]) seating.push({studentId:pair[1].id, section:pair[1].section, seat:"B", table:i+1});
-  });
+  majority.forEach((s,i)=>seating.push({studentId:s.id, section:s.section, seat:"A", num:i+1}));
+  minority.forEach((s,i)=>seating.push({studentId:s.id, section:s.section, seat:"B", num:i+1}));
   return seating;
 }
 
@@ -2313,27 +2302,29 @@ function AutoCommitteeModal({state, assignedOn, onClose, onCreateBatch}){
   const generate=()=>{
     if(!canGenerate) return;
     const subjectOf = new Map(sectionsToday.map(s=>[s.section,s.subject]));
-    const pool = sectionsToday.flatMap(s=>s.avail.map(st=>({id:st.id,section:st.section})));
-    const seating = buildSeating(pool, grades); // مُتَجاوَلة بالكامل عبر كل الشُّعب معاً
-    // توزيع بحسب سعة كل قاعة، مع الحفاظ على كل طاولة (A/B) داخل نفس القاعة
-    const pairsMap = new Map();
-    seating.forEach(x=>{ if(!pairsMap.has(x.table)) pairsMap.set(x.table,[]); pairsMap.get(x.table).push(x); });
-    const pairs = [...pairsMap.values()];
+    // كل شعبة مجموعة مستقلة (تُخلط عشوائياً بداخلها)، ثم تُوزَّع على القاعات: القاعة
+    // تُملأ من أكبر شعبة متبقية أولاً (فتصير هي الأغلبية/عمود A بتلك القاعة)، وإن
+    // فضل مكان تُكمَّل من الشُّعب الأخرى (الأقلية/عمود B).
+    let pools = sectionsToday.map(s=>({section:s.section, list:shuffleArr(s.avail)}))
+      .sort((a,b)=>b.list.length-a.list.length);
+    const roomsOut = rooms.map(r=>({venue:r.name.trim(), cap:+r.capacity||0, students:[]}));
     let ri=0;
-    const roomsOut = rooms.map(r=>({venue:r.name.trim(), cap:+r.capacity||0, seating:[]}));
-    for(const pair of pairs){
-      while(ri<roomsOut.length && roomsOut[ri].seating.length + pair.length > roomsOut[ri].cap){
-        if(roomsOut[ri].seating.length===0) break; // قاعة فاضية وما تكفي حتى لطاولة وحدة — نكمّل فيها رغم كذا
-        ri++;
-      }
-      if(ri>=roomsOut.length) ri=roomsOut.length-1;
-      roomsOut[ri].seating.push(...pair);
+    while(pools.some(p=>p.list.length) && ri<roomsOut.length){
+      const room = roomsOut[ri];
+      const remaining = room.cap - room.students.length;
+      if(remaining<=0){ ri++; continue; }
+      pools = pools.filter(p=>p.list.length).sort((a,b)=>b.list.length-a.list.length);
+      if(!pools.length) break;
+      const take = pools[0].list.splice(0, remaining);
+      room.students.push(...take.map(s=>({id:s.id, section:s.section})));
+      if(room.students.length>=room.cap) ri++;
     }
-    const result = roomsOut.filter(r=>r.seating.length).map(r=>{
-      const studentIds=r.seating.map(x=>x.studentId);
-      const secsUsed=[...new Set(r.seating.map(x=>x.section))];
-      const entries=secsUsed.map(sec=>({section:sec, subject:subjectOf.get(sec)||""}));
-      return {venue:r.venue, date, entries, studentIds, seating:r.seating, auto:true};
+    const result = roomsOut.filter(r=>r.students.length).map(r=>{
+      const seating = buildSeating(r.students, grades);
+      const studentIds = r.students.map(s=>s.id);
+      const secsUsed = [...new Set(r.students.map(s=>s.section))];
+      const entries = secsUsed.map(sec=>({section:sec, subject:subjectOf.get(sec)||""}));
+      return {venue:r.venue, date, entries, studentIds, seating, auto:true};
     });
     setPreview(result);
   };
@@ -2418,12 +2409,11 @@ function VerifyModal({state,onClose}){
     if(missing.length) issues.push(`لجنة ${c.number}: ${missing.length} طالب محذوف من النظام.`);
     const noSeat=c.studentIds.filter(id=>!(c.seating||[]).find(x=>x.studentId===id));
     if(noSeat.length) issues.push(`لجنة ${c.number}: ${noSeat.length} طالب بدون رقم جلوس (أعد تصدير الكشف لتوليده).`);
-    let sameGrade=0;
-    const bySeat={}; (c.seating||[]).forEach(x=>{ (bySeat[x.table]=bySeat[x.table]||{})[x.seat]=x; });
-    Object.values(bySeat).forEach(t=>{
-      if(t.A&&t.B){ const gA=gradeForSection(t.A.section,grades), gB=gradeForSection(t.B.section,grades); if(gA&&gB&&gA.id===gB.id) sameGrade++; }
-    });
-    if(sameGrade) issues.push(`لجنة ${c.number}: ${sameGrade} طاولة فيها طالبان من نفس الصف بجانب بعض (تعذّر تفاديه بالكامل بسبب أعداد الشُّعب).`);
+    const seatA=(c.seating||[]).filter(x=>x.seat==="A"), seatB=(c.seating||[]).filter(x=>x.seat==="B");
+    const secsA=new Set(seatA.map(x=>x.section));
+    if(secsA.size>1) issues.push(`لجنة ${c.number}: عمود A فيه أكثر من شعبة (المفروض شعبة واحدة فقط — الأغلبية).`);
+    const overlap=[...secsA].some(sec=>seatB.some(x=>x.section===sec));
+    if(overlap) issues.push(`لجنة ${c.number}: فيه طلاب من نفس شعبة عمود A موجودين بعمود B أيضاً.`);
   });
   return (
     <Modal title="نتيجة التحقّق" onClose={onClose}
@@ -2454,6 +2444,12 @@ const PRINT_CSS = `
   .brand{ display:flex; align-items:center; gap:14px; }
   .seal{ width:58px; height:58px; border-radius:15px; background:linear-gradient(150deg,#1e4fa3,#0e2c5e); color:#fff; display:flex; align-items:center; justify-content:center; font-family:"El Messiri"; font-size:30px; font-weight:700; }
   .seal.img{ background:none; border-radius:0; object-fit:contain; }
+  .doc-head.centered{ flex-direction:column; text-align:center; border-bottom:3px solid #1e4fa3; padding-bottom:12px; }
+  .doc-head.centered .seal.img{ width:92px; height:92px; margin:0 auto 8px; }
+  .doc-head.centered .gov{ font-size:14px; font-weight:700; color:#0e2c5e; }
+  .doc-head.centered .gov2{ font-size:12.5px; color:#55647d; margin-bottom:6px; }
+  .doc-head.centered .school{ font-size:21px; }
+  .doc-head.centered .doctitle{ font-size:16px; }
   .roster-cols{ display:flex; gap:14px; align-items:flex-start; }
   .roster-cols table.tbl{ flex:1; width:50%; margin-top:0; }
   table.tbl.roster th, table.tbl.roster td{ padding:5px 6px; font-size:11px; }
@@ -2501,6 +2497,18 @@ function printHead({schoolName, title, subtitle, badge, logo}){
     ${badge?`<div class="badge"><div class="badge-k">${esc(badge.k)}</div><div class="badge-v">${esc(badge.v)}</div></div>`:""}
   </div>`;
 }
+// رأس مركزي بشعار كبير (لكشوف اللجان الرسمية) — الشعار في الوسط أعلى الصفحة
+function printHeadCentered({schoolName, title, subtitle, badge}){
+  return `<div class="doc-head centered">
+    <img class="seal img" src="${esc(MOE_LOGO_URL)}" alt="شعار وزارة التعليم"/>
+    <div class="gov">المملكة العربية السعودية</div>
+    <div class="gov2">وزارة التعليم</div>
+    <div class="school">${esc(schoolName)}</div>
+    <div class="doctitle">${esc(title)}</div>
+    ${subtitle?`<div class="subtitle">${esc(subtitle)}</div>`:""}
+    ${badge?`<div class="badge" style="margin:10px auto 0"><div class="badge-k">${esc(badge.k)}</div><div class="badge-v">${esc(badge.v)}</div></div>`:""}
+  </div>`;
+}
 function printMeta(fields){
   return `<div class="meta-row">${fields.map(f=>`<div class="meta-box"><div class="meta-k">${esc(f.k)}</div><div class="meta-v">${esc(f.v||"—")}</div></div>`).join("")}</div>`;
 }
@@ -2523,34 +2531,27 @@ function openPrint(title, innerHTML){
 
 function printCommittee(c, state){
   const {students,grades,meta}=state;
-  const subjectOf = sec => ((c.entries||[]).find(e=>e.section===sec)||{}).subject || "—";
   const seatOf = id => (c.seating||[]).find(x=>x.studentId===id);
   const list = c.studentIds
     .map(id=>({stu:students.find(s=>s.id===id), seat:seatOf(id)}))
     .filter(x=>x.stu);
-  list.sort((a,b)=>{
-    const ta=(a.seat&&a.seat.table)||9999, tb=(b.seat&&b.seat.table)||9999;
-    if(ta!==tb) return ta-tb;
-    return ((a.seat&&a.seat.seat)||"").localeCompare((b.seat&&b.seat.seat)||"");
-  });
 
-  const seatLabel = s => s ? `${s.table}${s.seat}` : "—";
-  const rowHtml = it => `<tr><td class="seat">${esc(seatLabel(it.seat))}</td><td class="name">${esc(it.stu.name)}</td><td>شعبة ${it.stu.section}</td><td>${esc(subjectOf(it.stu.section))}</td><td class="sig-cell"></td></tr>`;
-  const theadHtml = `<thead><tr><th style="width:52px">الجلوس</th><th>اسم الطالب</th><th>الشعبة</th><th>المادة</th><th style="width:90px">التوقيع</th></tr></thead>`;
+  const seatLabel = s => s ? `${s.seat}${s.num}` : "—";
+  const rowHtml = it => `<tr><td class="seat">${esc(seatLabel(it.seat))}</td><td class="name">${esc(it.stu.name)}</td><td>شعبة ${it.stu.section}</td><td>${esc(gradeName(it.stu.section,grades))}</td><td class="sig-cell"></td></tr>`;
+  const theadHtml = `<thead><tr><th style="width:52px">رقم الجلوس</th><th>اسم الطالب</th><th>الشعبة</th><th>الصف</th><th style="width:90px">التوقيع</th></tr></thead>`;
+  const build = arr => `<table class="tbl roster">${theadHtml}<tbody>${arr.map(rowHtml).join("")}</tbody></table>`;
 
-  let tableHtml;
-  if(list.length>22){
-    const mid=Math.ceil(list.length/2);
-    const colA=list.slice(0,mid), colB=list.slice(mid);
-    const build=arr=>`<table class="tbl roster">${theadHtml}<tbody>${arr.map(rowHtml).join("")}</tbody></table>`;
-    tableHtml = `<div class="roster-cols">${build(colA)}${build(colB)}</div>`;
-  } else {
-    tableHtml = `<table class="tbl roster">${theadHtml}<tbody>${list.map(rowHtml).join("")}</tbody></table>`;
-  }
+  // عمود A دائماً على اليمين (أول عنصر بترتيب RTL) — الشعبة الأغلبية، مرتّبة A1..An.
+  // عمود B على اليسار — بقية الطلاب، مرتّبة B1..Bn.
+  const colA = list.filter(x=>x.seat && x.seat.seat==="A").sort((a,b)=>a.seat.num-b.seat.num);
+  const colB = list.filter(x=>x.seat && x.seat.seat==="B").sort((a,b)=>a.seat.num-b.seat.num);
+  const noSeat = list.filter(x=>!x.seat);
+  let tableHtml = `<div class="roster-cols">${build(colA)}${build(colB.length?colB:noSeat)}</div>`;
+  if(colB.length && noSeat.length) tableHtml += build(noSeat); // احتياط: طلاب بلا رقم جلوس (نادر)
 
   const entriesLine = (c.entries||[]).map(e=>`شعبة ${e.section} (${esc(gradeName(e.section,grades))}) — ${esc(e.subject||"—")}`).join(" · ");
 
-  const inner = printHead({schoolName:meta.schoolName, title:"كشف مناداة", subtitle:`لجنة اختبار رقم ${c.number}`, badge:{k:"عدد الطلاب", v:c.studentIds.length}, logo:true})
+  const inner = printHeadCentered({schoolName:meta.schoolName, title:"كشف مناداة", subtitle:`لجنة اختبار رقم ${c.number}`, badge:{k:"عدد الطلاب", v:c.studentIds.length}})
     + printMeta([
         {k:"مقر الاختبار", v:c.venue},
         {k:"اليوم", v:c.date?weekdayOf(c.date):""},
@@ -2558,7 +2559,7 @@ function printCommittee(c, state){
       ])
     + `<div class="subtitle" style="margin:2px 0 10px">${entriesLine}</div>`
     + tableHtml
-    + printSigns(["رئيس اللجنة","المراقب","وكيل الشؤون"])
+    + printSigns(["المراقب الأول","المراقب الثاني"])
     + printFoot(meta.schoolName);
   openPrint("كشف مناداة - لجنة "+c.number, inner);
 }
