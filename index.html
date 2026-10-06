@@ -392,6 +392,12 @@ const SUBJECTS = [
   "التاريخ","التوحيد","الحديث","الهندسة","الإدارة المالية","مقدمة في الأعمال",
   "الفنون","اللياقة والثقافة الصحية"
 ];
+const BASE_SUBJECTS = SUBJECTS.slice();
+// يدمج المواد المضافة يدوياً (state.customSubjects) داخل SUBJECTS في مكانها حتى تظهر بكل القوائم
+const syncSubjects = custom => {
+  const extra=(custom||[]).filter(n=>n && !BASE_SUBJECTS.includes(n));
+  SUBJECTS.length=0; SUBJECTS.push(...BASE_SUBJECTS,...extra);
+};
 
 const DEFAULT_STATE = {
   meta:{ schoolName:"ثانوية مارز الإيمان", sectionsCount:17, absenceThreshold:5 },
@@ -405,6 +411,7 @@ const DEFAULT_STATE = {
     {id:uid(), username:"wakeel", password:"1234", role:"deputy", name:"وكيل الشؤون"},
   ],
   teachers:[],
+  customSubjects:[],     // مواد أضافها المدير/الوكيل بأسماء جديدة
   students:[],
   attendance:{},        // { 'YYYY-MM-DD': { studentId: 'present'|'absent'|'late'|'excused' } }
   attMeta:{},           // { 'YYYY-MM-DD': { studentId: ISOدateTime لوقت التسجيل } }
@@ -666,6 +673,7 @@ const NAV = [
 
 /* ========================= SHELL ========================= */
 function Shell({state, commit, user, onLogout, onUserUpdate}){
+  syncSubjects(state.customSubjects);
   const visible = n => {
     if(n.sep) return true;
     if(!n.roles.includes(user.role)) return false;
@@ -1958,13 +1966,37 @@ function Teachers({state, commit}){
     setModal(null);
   };
   const remove=t=>{ commit(p=>({...p,teachers:p.teachers.filter(x=>x.id!==t.id)})); toast("تم حذف المعلم","err"); };
+  const [subjModal,setSubjModal]=useState(false);
+  const saveSubject=({name,teacherId,sections})=>{
+    commit(p=>({...p,
+      customSubjects:[...(p.customSubjects||[]),name],
+      teachers:p.teachers.map(t=>t.id!==teacherId?t:{...t,
+        subjects:[...new Set([...(t.subjects||[]),name])],
+        sections:[...new Set([...(t.sections||[]),...sections])].sort((a,b)=>a-b)})}));
+    toast("تمت إضافة المادة «"+name+"»"); setSubjModal(false);
+  };
+  const removeSubject=name=>{
+    commit(p=>({...p,customSubjects:(p.customSubjects||[]).filter(x=>x!==name),
+      teachers:p.teachers.map(t=>({...t,subjects:(t.subjects||[]).filter(x=>x!==name)}))}));
+    toast("تم حذف المادة","err");
+  };
 
   return (
     <div className="rise">
       <div className="section-head">
         <div><h2>المعلمون</h2><p>{state.teachers.length} معلم · اربط كل معلم بموادّه وشُعبه.</p></div>
-        <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة معلم</button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button className="btn ghost" onClick={()=>setSubjModal(true)}>+ إضافة مادة جديدة</button>
+          <button className="btn" onClick={()=>setModal({mode:"add"})}>+ إضافة معلم</button>
+        </div>
       </div>
+      {(state.customSubjects||[]).length>0 && <div className="card pad" style={{marginBottom:14}}>
+        <div style={{fontSize:13,color:"var(--ink-soft)",marginBottom:8}}>المواد المضافة يدوياً</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+          {state.customSubjects.map(n=><span className="tag accent" key={n} style={{display:"inline-flex",alignItems:"center",gap:6}}>{n}
+            <button type="button" aria-label={"حذف مادة "+n} style={{border:0,background:"none",cursor:"pointer",color:"inherit",fontSize:15,lineHeight:1}}
+              onClick={()=>setConfirm({text:`حذف المادة «${n}» من قوائم المواد ومن كل المعلمين؟`,onYes:()=>removeSubject(n)})}>×</button></span>)}
+        </div></div>}
       {state.teachers.length===0
         ? <div className="card"><div className="empty"><div className="big">✎</div>لا يوجد معلمون بعد.</div></div>
         : <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))"}}>
@@ -1987,9 +2019,40 @@ function Teachers({state, commit}){
               </div>
             </div>)}
           </div>}
+      {subjModal && <SubjectForm teachers={state.teachers} existing={SUBJECTS} secs={secs} grades={state.grades} onClose={()=>setSubjModal(false)} onSave={saveSubject}/>}
       {modal && <TeacherForm mode={modal.mode} teacher={modal.teacher} secs={secs} grades={state.grades} onClose={()=>setModal(null)} onSave={save}/>}
       {confirm && <Confirm {...confirm} danger onClose={()=>setConfirm(null)}/>}
     </div>
+  );
+}
+function SubjectForm({teachers,existing,secs,grades,onClose,onSave}){
+  const [name,setName]=useState("");
+  const [teacherId,setTeacherId]=useState("");
+  const [sections,setSections]=useState([]);
+  const toggle=v=>setSections(a=>a.includes(v)?a.filter(x=>x!==v):[...a,v]);
+  const pick=id=>{ setTeacherId(id); const t=teachers.find(x=>x.id===id); setSections(t?.sections?[...t.sections]:[]); };
+  const nm=name.trim();
+  const dup=existing.some(x=>x===nm);
+  const valid=nm.length>=2 && !dup && teacherId && sections.length>0;
+  return (
+    <Modal title="إضافة مادة جديدة" onClose={onClose} wide
+      foot={<>
+        <button className="btn" disabled={!valid} onClick={()=>onSave({name:nm,teacherId,sections})}>حفظ</button>
+        <button className="btn ghost" onClick={onClose}>إلغاء</button>
+      </>}>
+      <Field label="اسم المادة" hint={dup?"هذه المادة موجودة مسبقاً":undefined}>
+        <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="مثال: الذكاء الاصطناعي"/></Field>
+      <Field label="المعلم المسؤول عن المادة">
+        <select className="input" value={teacherId} onChange={e=>pick(e.target.value)}>
+          <option value="">— اختر المعلم —</option>
+          {teachers.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+        </select></Field>
+      {teachers.length===0 && <div className="hint">أضف معلماً أولاً ثم ارجع لإضافة المادة.</div>}
+      <div className="field" style={{margin:0}}><label>الشُّعب التي يدرّس فيها هذه المادة</label>
+        <div style={{display:"flex",flexWrap:"wrap"}} role="group" aria-label="الشُّعب">
+          {secs.map(n=><button type="button" key={n} aria-pressed={sections.includes(n)} className={"chk"+(sections.includes(n)?" on":"")} onClick={()=>toggle(n)}>شعبة {n} · {gradeName(n,grades)}</button>)}
+        </div></div>
+    </Modal>
   );
 }
 function TeacherForm({mode,teacher,secs,grades,onClose,onSave}){
